@@ -18,6 +18,8 @@ export interface LiveRankingEntry {
   score: number;
   answered: number;
   completedLabel: string;
+  /** 每道题的对错结果，用于课堂直播间展开学生答题明细。 */
+  itemResults: Array<{ itemId: string; correct: boolean }>;
 }
 
 export interface LiveItemMetric {
@@ -127,7 +129,12 @@ function answeredRateFor(status: LiveInteractionStatus, index: number) {
   return 0;
 }
 
-function buildRanking(participantCount: number, index: number, status: LiveInteractionStatus): LiveRankingEntry[] {
+function buildRanking(
+  participantCount: number,
+  index: number,
+  status: LiveInteractionStatus,
+  items: InteractionItem[]
+): LiveRankingEntry[] {
   const names = [
     ["student-anisa", "Anisa", "安"],
     ["student-kevin", "Kevin Tan", "凯"],
@@ -146,7 +153,12 @@ function buildRanking(participantCount: number, index: number, status: LiveInter
     avatar,
     score: Math.max(0, Math.round(base - studentIndex * 6 - index * 2)),
     answered: Math.min(answered, studentIndex < participantCount ? answered : 0),
-    completedLabel: status === "live" && studentIndex < 3 ? "刚刚提交" : status === "completed" ? "已完成" : "等待中"
+    completedLabel: status === "live" && studentIndex < 3 ? "刚刚提交" : status === "completed" ? "已完成" : "等待中",
+    itemResults: status === "upcoming" ? [] : items.map((item, itemIndex) => ({
+      itemId: item.id,
+      // 演示数据中排名越靠前的学生错题越少；首名学生全部答对。
+      correct: studentIndex === 0 || ((studentIndex + itemIndex + index) % 4 !== 0 && studentIndex < 6)
+    }))
   }));
 }
 
@@ -238,7 +250,7 @@ export function buildTeacherLiveDemo(state: PlatformState, teacherId: string, re
       averageScore: status === "upcoming" ? 0 : status === "completed" ? 91 : 85,
       correctRate: status === "upcoming" ? 0 : status === "completed" ? 88 : 79,
       durationLabel: status === "completed" ? "用时 4 分 22 秒" : status === "live" ? "已开放 3 分 18 秒" : "待开启",
-      ranking: buildRanking(presentCount, index, status),
+      ranking: buildRanking(presentCount, index, status, items),
       items: itemMetrics(items, status, presentCount, index)
     };
   });

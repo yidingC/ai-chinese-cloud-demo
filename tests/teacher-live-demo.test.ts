@@ -30,9 +30,13 @@ describe("teacher live classroom demo", () => {
     expect(live?.ranking).toHaveLength(8);
     expect(live?.ranking[0].score).toBeGreaterThan(live?.ranking[4].score ?? 0);
     expect(live?.items.some((item) => item.status === "live")).toBe(true);
+    expect(live?.ranking[0].itemResults).toHaveLength(live?.items.length ?? 0);
+    expect(live?.ranking[0].itemResults.every((item) => item.correct)).toBe(true);
+    expect(live?.ranking[3].itemResults.some((item) => !item.correct)).toBe(true);
 
     const upcoming = demo?.interactions.find((interaction) => interaction.status === "upcoming");
     expect(upcoming?.items.every((item) => item.answered === 0 && item.status === "upcoming")).toBe(true);
+    expect(upcoming?.ranking.every((student) => student.itemResults.length === 0)).toBe(true);
   });
 
   it("returns null when the selected teacher has no published sessions", () => {

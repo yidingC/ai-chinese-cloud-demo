@@ -13,6 +13,7 @@ import { StudentLesson } from "./pages/student/StudentLesson";
 import { StudentGrades } from "./pages/student/StudentGrades";
 import { TeacherDashboard } from "./pages/teacher/TeacherDashboard";
 import { TeacherLiveClass } from "./pages/teacher/TeacherLiveClass";
+import { TeacherLiveClassPreview } from "./pages/teacher/TeacherLiveClassPreview";
 import { TeacherSchedule } from "./pages/teacher/TeacherSchedule";
 
 import { TeacherSessionDesign } from "./pages/teacher/TeacherSessionDesign";
@@ -80,6 +81,7 @@ export default function App() {
           <Route path="/teacher" element={<RoleGate role="teacher"><Outlet /></RoleGate>}>
             <Route index element={<TeacherDashboard />} />
             <Route path="live/:sessionId" element={<TeacherLiveClass />} />
+            <Route path="live-preview/:sessionId" element={<TeacherLiveClassPreview />} />
             <Route path="schedule" element={<TeacherSchedule />} />
             <Route path="session/:sessionId" element={<SessionRosterRedirect />} />
             <Route path="session/:sessionId/design" element={<TeacherSessionDesign />} />
