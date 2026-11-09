@@ -259,16 +259,20 @@ describe("AI Chinese Cloud platform store", () => {
   });
 
   it("creates course structure and student profiles", () => {
-    const folder = platform.createFolder({ parentId: "folder-root", name: "节日主题" });
-    expect(folder.ok).toBe(true);
+    const subject = platform.createSubject({ name: "文化专题" });
+    expect(subject.ok).toBe(true);
+
+    const course = platform.createCourse({ subjectId: subject.data!.id, name: "节日主题" });
+    expect(course.ok).toBe(true);
 
     const lesson = platform.createLesson({
-      folderId: folder.data!.id,
+      folderId: course.data!.id,
       title: "春节问候",
       subtitle: "Salam Tahun Baru Imlek",
       tags: ["节日", "文化"]
     });
     expect(lesson.ok).toBe(true);
+    expect(lesson.data?.status).toBe("draft");
 
     const student = platform.createStudent({
       name: "Nadia",
@@ -277,6 +281,197 @@ describe("AI Chinese Cloud platform store", () => {
     });
     expect(student.ok).toBe(true);
     expect(platform.getState().students.some((profile) => profile.userId === student.data!.user.id)).toBe(true);
+  });
+
+  it("publishes courses only after a lesson is ready and protects referenced courses", () => {
+    const subject = platform.createSubject({ name: "生命周期测试" });
+    const course = platform.createCourse({ subjectId: subject.data!.id, name: "测试课程" });
+    const lesson = platform.createLesson({ folderId: course.data!.id, title: "测试课节" });
+
+    expect(platform.setCourseStatus({ courseId: course.data!.id, status: "published" })).toMatchObject({
+      ok: false,
+      code: "COURSE_EMPTY"
+    });
+    expect(platform.setLessonStatus({ lessonId: lesson.data!.id, status: "published" }).ok).toBe(true);
+    expect(platform.setCourseStatus({ courseId: course.data!.id, status: "published" }).ok).toBe(true);
+    expect(platform.deleteCourse({ courseId: "folder-campus" })).toMatchObject({ ok: false, code: "COURSE_IN_USE" });
+    expect(platform.deleteLesson({ lessonId: "lesson-friends" })).toMatchObject({ ok: false, code: "LESSON_IN_USE" });
+    expect(platform.deleteSubject({ subjectId: subject.data!.id })).toMatchObject({ ok: false, code: "SUBJECT_IN_USE" });
+
+    expect(platform.deleteCourse({ courseId: course.data!.id }).ok).toBe(true);
+    expect(platform.getState().lessons.some((item) => item.id === lesson.data!.id)).toBe(false);
+    expect(platform.deleteSubject({ subjectId: subject.data!.id }).ok).toBe(true);
+  });
+
+  it("creates school staff accounts directly and rejects duplicate phone numbers", () => {
+    const created = platform.createSchoolStaff({
+      schoolId: "school-sacred-heart",
+      role: "teacher",
+      name: "测试教师",
+      phone: "+62 812 7777 0101",
+      note: "负责七年级中文",
+      timeZone: "Asia/Jakarta",
+      actorId: "operator-ray"
+    });
+    expect(created.ok).toBe(true);
+    expect(created.data?.user).toMatchObject({
+      role: "teacher",
+      name: "测试教师",
+      phone: "+62 812 7777 0101",
+      bio: "负责七年级中文"
+    });
+    expect(created.data?.membership).toMatchObject({
+      schoolId: "school-sacred-heart",
+      userId: created.data?.user.id,
+      role: "teacher",
+      status: "active"
+    });
+
+    const duplicate = platform.createSchoolStaff({
+      schoolId: "school-sacred-heart",
+      role: "teacher",
+      name: "重复手机号教师",
+      phone: "+62 812 7777 0101",
+      actorId: "operator-ray"
+    });
+    expect(duplicate.ok).toBe(false);
+    expect(duplicate.code).toBe("PHONE_EXISTS");
+    expect(platform.getState().users.filter((user) => user.name === "重复手机号教师")).toHaveLength(0);
+  });
+
+  it("persists school timezones when schools are created and updated", () => {
+    const created = platform.createSchool({
+      name: "时区测试学校",
+      code: "TZ-TEST",
+      timeZone: "Asia/Singapore",
+      actorId: "operator-ray"
+    });
+    expect(created.ok).toBe(true);
+    expect(created.data?.timeZone).toBe("Asia/Singapore");
+
+    const updated = platform.updateSchool({
+      schoolId: created.data!.id,
+      patch: { timeZone: "Asia/Shanghai" },
+      actorId: "operator-ray"
+    });
+    expect(updated.ok).toBe(true);
+    expect(platform.getState().schools.find((school) => school.id === created.data!.id)?.timeZone).toBe("Asia/Shanghai");
+  });
+
+  it("deletes only empty schools and blocks deleting schools with history", () => {
+    const created = platform.createSchool({
+      name: "待删除空学校",
+      code: "EMPTY-DELETE",
+      actorId: "operator-ray"
+    });
+    expect(created.ok).toBe(true);
+    expect(platform.deleteSchool({ schoolId: created.data!.id, actorId: "operator-ray" }).ok).toBe(true);
+    expect(platform.getState().schools.some((school) => school.id === created.data!.id)).toBe(false);
+
+    const schoolInUse = platform.getState().schools[0];
+    const blocked = platform.deleteSchool({ schoolId: schoolInUse.id, actorId: "operator-ray" });
+    expect(blocked.ok).toBe(false);
+    expect(blocked.code).toBe("SCHOOL_IN_USE");
+    expect(platform.getState().schools.some((school) => school.id === schoolInUse.id)).toBe(true);
+  });
+
+  it("blocks removing a teacher while they still teach an active class", () => {
+    const state = platform.getState();
+    const activeClass = state.classes.find((item) => item.status === "active" && item.schoolId && item.teacherId);
+    expect(activeClass).toBeTruthy();
+
+    const result = platform.saveSchoolMembership({
+      schoolId: activeClass!.schoolId,
+      userId: activeClass!.teacherId,
+      role: "teacher",
+      status: "left",
+      actorId: "operator-ray"
+    });
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe("TEACHER_HAS_CLASSES");
+
+    const after = platform.getState();
+    expect(after.schoolMemberships).toContainEqual(expect.objectContaining({
+      schoolId: activeClass!.schoolId,
+      userId: activeClass!.teacherId,
+      role: "teacher",
+      status: "active"
+    }));
+  });
+
+  it("deletes only empty classes and requires history-bearing classes to be archived", () => {
+    const created = platform.createClass({
+      name: "临时空班",
+      teacherId: "teacher-lina",
+      schoolId: "school-demo",
+      actorId: "operator-ray"
+    });
+    expect(created.ok).toBe(true);
+
+    const removed = platform.deleteClass({ classId: created.data!.id, actorId: "operator-ray" });
+    expect(removed.ok).toBe(true);
+    expect(platform.getState().classes.some((item) => item.id === created.data!.id)).toBe(false);
+
+    const before = platform.getState();
+    const classWithHistory = before.classes.find((item) => before.classEnrollments.some((enrollment) => enrollment.classId === item.id));
+    expect(classWithHistory).toBeTruthy();
+
+    const rejected = platform.deleteClass({ classId: classWithHistory!.id, actorId: "operator-ray" });
+    expect(rejected.ok).toBe(false);
+    expect(rejected.code).toBe("CLASS_IN_USE");
+    expect(platform.getState().classes.some((item) => item.id === classWithHistory!.id)).toBe(true);
+  });
+
+  it("keeps a student in another class when removed from only one enrollment", () => {
+    const before = platform.getState();
+    const studentId = "student-nadia";
+    const originalClass = before.classes.find((item) =>
+      before.classEnrollments.some((enrollment) =>
+        enrollment.classId === item.id && enrollment.studentId === studentId && enrollment.status === "active"
+      )
+    );
+    expect(originalClass).toBeTruthy();
+
+    const created = platform.createClass({
+      name: "跨班保留测试",
+      teacherId: "teacher-lina",
+      schoolId: originalClass!.schoolId,
+      actorId: "operator-ray"
+    });
+    expect(created.ok).toBe(true);
+    expect(platform.addClassMembers({ classId: created.data!.id, studentIds: [studentId], actorId: "operator-ray" }).ok).toBe(true);
+    expect(platform.removeClassMember({ classId: originalClass!.id, studentId, actorId: "operator-ray" }).ok).toBe(true);
+
+    const after = platform.getState();
+    const profile = after.students.find((item) => item.userId === studentId)!;
+    expect(after.classEnrollments).toContainEqual(expect.objectContaining({
+      classId: created.data!.id,
+      studentId,
+      status: "active"
+    }));
+    expect(profile.primaryClassId).toBe(created.data!.id);
+    expect(profile.className).toBe("跨班保留测试");
+  });
+
+  it("assigns the first class when a pending student is added to a class", () => {
+    const student = platform.createStudent({
+      name: "待分班演示学生",
+      schoolId: "school-demo",
+      actorId: "operator-ray"
+    });
+    expect(student.ok).toBe(true);
+    const created = platform.createClass({
+      name: "首次入班测试",
+      teacherId: "teacher-lina",
+      schoolId: "school-demo",
+      actorId: "operator-ray"
+    });
+    expect(created.ok).toBe(true);
+    expect(platform.addClassMembers({ classId: created.data!.id, studentIds: [student.data!.user.id], actorId: "operator-ray" }).ok).toBe(true);
+
+    const profile = platform.getState().students.find((item) => item.userId === student.data!.user.id)!;
+    expect(profile.primaryClassId).toBe(created.data!.id);
+    expect(profile.className).toBe("首次入班测试");
   });
 
   it("can remove an interaction from every lesson session without deleting the design", () => {
@@ -561,6 +756,108 @@ describe("AI Chinese Cloud platform store", () => {
       wrongItemIds: []
     });
     expect(second.data?.bestScore).toBe(90);
+  });
+
+  it("keeps a per-session roster snapshot with sync, manual additions and a start-time freeze", () => {
+    const before = platform.getState();
+    const now = Date.now();
+    const target = before.sessions.find(
+      (session) =>
+        session.source === "single" &&
+        session.status !== "cancelled" &&
+        new Date(session.startAt).getTime() > now &&
+        (session.roster?.length ?? 0) >= 2
+    );
+    expect(target).toBeDefined();
+    const originalRoster = [...(target!.roster ?? [])];
+    const manualStudentId = originalRoster[0].studentId;
+
+    const removed = platform.removeSessionRosterStudent({
+      sessionId: target!.id,
+      studentId: manualStudentId,
+      actorId: "operator-ray"
+    });
+    expect(removed.ok).toBe(true);
+    expect(removed.data?.some((entry) => entry.studentId === manualStudentId)).toBe(false);
+
+    const manual = platform.addSessionRosterStudents({
+      sessionId: target!.id,
+      studentIds: [manualStudentId],
+      actorId: "operator-ray"
+    });
+    expect(manual.ok).toBe(true);
+    expect(manual.data?.find((entry) => entry.studentId === manualStudentId)?.source).toBe("manual");
+    expect(platform.removeClassMember({
+      classId: target!.classId,
+      studentId: manualStudentId,
+      actorId: "operator-ray"
+    }).ok).toBe(true);
+
+    const createdStudent = platform.createStudent({
+      name: "名单同步测试学生",
+      className: "名单同步测试班",
+      schoolId: target!.schoolId,
+      actorId: "operator-ray"
+    });
+    expect(createdStudent.ok).toBe(true);
+    const newMemberId = createdStudent.data!.user.id;
+    const addedToClass = platform.addClassMembers({
+      classId: target!.classId,
+      studentIds: [newMemberId!],
+      actorId: "operator-ray"
+    });
+    expect(addedToClass.ok).toBe(true);
+
+    const synced = platform.syncSessionRoster({ sessionId: target!.id, actorId: "operator-ray" });
+    expect(synced.ok).toBe(true);
+    expect(synced.data?.some((entry) => entry.studentId === newMemberId)).toBe(true);
+    expect(synced.data?.find((entry) => entry.studentId === manualStudentId)?.source).toBe("manual");
+
+    const past = platform.getState().sessions.find((session) => new Date(session.startAt).getTime() <= Date.now());
+    expect(past).toBeDefined();
+    const frozen = platform.syncSessionRoster({ sessionId: past!.id, actorId: "operator-ray" });
+    expect(frozen.ok).toBe(false);
+    expect(frozen.code).toBe("ROSTER_FROZEN");
+  });
+
+  it("cancels without a required reason and keeps internal reasons out of student notifications", () => {
+    const findCancelable = () => platform.getState().sessions.find((session) =>
+      session.status !== "cancelled" &&
+      platform.getState().bookings.some((booking) => booking.sessionId === session.id && booking.status === "booked")
+    );
+
+    const withoutReasonSession = findCancelable();
+    expect(withoutReasonSession).toBeDefined();
+    const beforeIds = new Set(platform.getState().notifications.map((notice) => notice.id));
+    const withoutReason = platform.cancelSession({
+      sessionId: withoutReasonSession!.id,
+      actorId: "operator-ray"
+    });
+    expect(withoutReason.ok).toBe(true);
+    expect(platform.getState().sessions.find((session) => session.id === withoutReasonSession!.id)?.status).toBe("cancelled");
+    const reasonFreeNotices = platform.getState().notifications
+      .filter((notice) => !beforeIds.has(notice.id) && notice.type === "session_cancelled");
+    expect(reasonFreeNotices.length).toBeGreaterThan(0);
+    expect(reasonFreeNotices.every((notice) => !notice.body.includes("原因"))).toBe(true);
+
+    platform.resetDemo();
+    const withReasonSession = findCancelable();
+    expect(withReasonSession).toBeDefined();
+    const internalReason = "内部原因：教师临时调整";
+    const beforeReasonIds = new Set(platform.getState().notifications.map((notice) => notice.id));
+    const withReason = platform.cancelSession({
+      sessionId: withReasonSession!.id,
+      actorId: "operator-ray",
+      reason: internalReason
+    });
+    expect(withReason.ok).toBe(true);
+    const after = platform.getState();
+    expect(after.sessions.find((session) => session.id === withReasonSession!.id)?.cancelReason).toBe(internalReason);
+    expect(after.auditEvents.find((event) => event.action === "cancel_session" && event.targetId === withReasonSession!.id)?.reason).toBe(internalReason);
+    const reasonNotices = after.notifications
+      .filter((notice) => !beforeReasonIds.has(notice.id) && notice.type === "session_cancelled");
+    expect(reasonNotices.length).toBeGreaterThan(0);
+    expect(reasonNotices.every((notice) => !notice.body.includes(internalReason) && !notice.body.includes("原因"))).toBe(true);
   });
 
   it("formats the same UTC time differently for Jakarta and Shanghai", () => {

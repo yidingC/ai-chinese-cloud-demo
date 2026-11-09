@@ -15,9 +15,9 @@ describe("academic affairs role and school isolation", () => {
     const ownClass = before.classes.find((item) => item.schoolId === "school-sacred-heart")!;
     const otherClass = before.classes.find((item) => item.schoolId !== "school-sacred-heart")!;
 
-    expect(platform.createLesson({ folderId: "folder-root", title: "教务越权课节" })).toMatchObject({ ok: false, code: "FORBIDDEN" });
-    expect(platform.createLesson({ folderId: "folder-root", title: "冒用教学管理", actorId: "operator-ray" })).toMatchObject({ ok: false, code: "FORBIDDEN" });
-    expect(platform.createFolder({ name: "教务越权目录" })).toMatchObject({ ok: false, code: "FORBIDDEN" });
+    expect(platform.createLesson({ folderId: "folder-greetings", title: "教务越权课节" })).toMatchObject({ ok: false, code: "FORBIDDEN" });
+    expect(platform.createLesson({ folderId: "folder-greetings", title: "冒用教学管理", actorId: "operator-ray" })).toMatchObject({ ok: false, code: "FORBIDDEN" });
+    expect(platform.createSubject({ name: "教务越权科目" })).toMatchObject({ ok: false, code: "FORBIDDEN" });
     expect(platform.saveInteractionSet({
       lessonId: "lesson-greetings",
       title: "教务越权互动",

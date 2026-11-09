@@ -34,7 +34,7 @@ describe("academic affairs workspace", () => {
     render(<App />);
     expect(await screen.findByRole("heading", { name: "印尼圣心学校教学运行中心" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /排课管理/ })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /学生管理/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /班级与学生/ })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /教师表现/ })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /课程目录/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /内容治理/ })).not.toBeInTheDocument();

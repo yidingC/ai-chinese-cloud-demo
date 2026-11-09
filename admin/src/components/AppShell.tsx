@@ -83,13 +83,10 @@ function navItems(role: Role, t: (key: string) => string) {
   }
   return [
     { to: "/operator", end: true, key: "dashboard", label: t("nav.dashboard") },
-    { to: "/operator/catalog", key: "catalog", label: t("nav.catalog") },
     { to: "/operator/scheduling", key: "scheduling", label: t("nav.scheduling") },
     { to: "/operator/students", key: "students", label: t("nav.students") },
     { to: "/operator/schools", key: "schools", label: t("nav.schools") },
-    { to: "/operator/governance", key: "governance", label: t("nav.governance") },
-    { to: "/operator/audit", key: "audit", label: t("nav.audit") },
-    { to: "/notifications", key: "dashboard", label: t("common.notifications") }
+    { to: "/operator/catalog", key: "catalog", label: t("nav.catalog") }
   ];
 }
 
@@ -297,10 +294,12 @@ export function AppShell() {
             </button>
           </PmNote>
 
-          <Button size="icon" variant="ghost" className="notification-button" onClick={() => navigate("/notifications")}>
-            <Bell size={19} />
-            {unread > 0 && <span className="notification-dot">{unread}</span>}
-          </Button>
+          {role !== "operator" && (
+            <Button size="icon" variant="ghost" className="notification-button" onClick={() => navigate("/notifications")}>
+              <Bell size={19} />
+              {unread > 0 && <span className="notification-dot">{unread}</span>}
+            </Button>
+          )}
 
           <Button
             variant="soft"

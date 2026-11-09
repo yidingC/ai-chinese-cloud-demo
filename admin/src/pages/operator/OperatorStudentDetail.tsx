@@ -1,15 +1,29 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useTranslation } from "react-i18next";
-import { ArrowLeft, CalendarPlus, ClipboardPlus, Pencil, Save, Star, TrendingUp } from "lucide-react";
+import { ArrowLeft, CalendarPlus, ClipboardPlus, Globe2, Pencil, Phone, Save, Star, TrendingUp, UsersRound } from "lucide-react";
 import { platform } from "../../lib/platform";
 import { usePlatformStore } from "../../store/usePlatformStore";
-import { currentUser, getLesson, getSession, getStudent, getUser, studentMetrics } from "../../lib/domain";
+import { currentUser, getLesson, getSession, getStudent, getUser, studentAppAccount, studentMetrics } from "../../lib/domain";
 import { getAcademicSchoolId, workspaceState } from "../../lib/academicScope";
-import { formatDateTime, relativeTime } from "../../lib/format";
-import type { PlatformUser, StudentProfile } from "../../domain/types";
-import { Avatar, Badge, Button, Card, EmptyState, Field, PageHeader, ProgressBar, Select, StatCard, Tabs, TextInput } from "../../components/ui";
+import { formatDateTime, relativeTime, timeZoneLabel } from "../../lib/format";
+import type { Booking, ClassSession, PlatformUser, StudentProfile } from "../../domain/types";
+import { Avatar, Badge, Button, Card, EmptyState, Field, Modal, PageHeader, Select, StatCard, Tabs, TextInput } from "../../components/ui";
 import { AssessmentCreateModal, AssessmentScoresModal } from "../../components/GradeAssessmentModal";
+
+function operatorCourseStatus(session: ClassSession, booking?: Booking) {
+  if (session.status === "cancelled" || booking?.status === "cancelled") {
+    return { label: "已取消", tone: "neutral" as const };
+  }
+  if (booking?.status === "pending_review") {
+    return { label: "待审核", tone: "orange" as const };
+  }
+  const now = Date.now();
+  const start = new Date(session.startAt).getTime();
+  const end = new Date(session.endAt).getTime();
+  if (start <= now && end >= now) return { label: "进行中", tone: "mint" as const };
+  if (end < now) return { label: "已结束", tone: "neutral" as const };
+  return { label: "待上课", tone: "purple" as const };
+}
 
 export function OperatorStudentDetail({
   academic = false,
@@ -20,7 +34,6 @@ export function OperatorStudentDetail({
 } = {}) {
   const { studentId = "" } = useParams();
   const navigate = useNavigate();
-  const { t } = useTranslation();
   const { state: rawState, run } = usePlatformStore();
   const operator = currentUser(rawState);
   const schoolId = academic ? getAcademicSchoolId(rawState, operator) : "";
@@ -28,6 +41,7 @@ export function OperatorStudentDetail({
   const user = getUser(state, studentId);
   const profile = getStudent(state, studentId);
   const metrics = studentMetrics(state, studentId);
+  const appAccount = studentAppAccount(user);
   const [tab, setTab] = useState<"bookings" | "results" | "profile">("bookings");
   const [createAssessmentOpen, setCreateAssessmentOpen] = useState(false);
   const [scoreAssessmentId, setScoreAssessmentId] = useState("");
@@ -35,18 +49,50 @@ export function OperatorStudentDetail({
   const [form, setForm] = useState(() => ({
     name: user?.name ?? "",
     phone: user?.phone ?? "",
-    status: user?.status ?? "active",
+    timeZone: user?.timeZone ?? "Asia/Jakarta",
     level: profile?.level ?? "",
     program: profile?.program ?? "",
     learningGoal: profile?.learningGoal ?? "",
     notes: profile?.notes ?? ""
   }));
-  const studentClassIds = state.classEnrollments
+  const studentClasses = state.classEnrollments
     .filter((item) => item.studentId === studentId && item.status === "active")
-    .map((item) => item.classId);
-  const studentAssessments = state.assessments
-    .filter((item) => item.status === "published" && item.rosterStudentIds.includes(studentId))
-    .sort((a, b) => new Date(b.assessedAt).getTime() - new Date(a.assessedAt).getTime());
+    .map((item) => state.classes.find((classItem) => classItem.id === item.classId))
+    .filter((item) => item?.status === "active" && !["待分班", "待分配班级"].includes(item.name));
+  const studentClassIds = studentClasses.map((classItem) => classItem!.id);
+  const studentBookingBySession = new Map(
+    state.bookings.filter((booking) => booking.studentId === studentId).map((booking) => [booking.sessionId, booking])
+  );
+  const operatorSessionIds = new Set([
+    ...state.sessions
+      .filter((session) => studentClassIds.includes(session.classId) && session.status !== "draft")
+      .map((session) => session.id),
+    ...studentBookingBySession.keys()
+  ]);
+  const operatorCourseRows = [...operatorSessionIds]
+    .flatMap((sessionId) => {
+      const session = getSession(state, sessionId);
+      return session ? [{ session, booking: studentBookingBySession.get(sessionId) }] : [];
+    })
+    .sort((a, b) => {
+      const now = Date.now();
+      const aUpcoming = new Date(a.session.endAt).getTime() >= now;
+      const bUpcoming = new Date(b.session.endAt).getTime() >= now;
+      if (aUpcoming !== bUpcoming) return aUpcoming ? -1 : 1;
+      const aStart = new Date(a.session.startAt).getTime();
+      const bStart = new Date(b.session.startAt).getTime();
+      return aUpcoming ? aStart - bStart : bStart - aStart;
+    });
+  const operatorUpcomingCourses = operatorCourseRows.filter(({ session, booking }) =>
+    operatorCourseStatus(session, booking).label !== "已取消"
+    && new Date(session.endAt).getTime() >= Date.now()
+  );
+  const studentClassSummary = studentClasses.map((classItem) => classItem!.name).join("、") || "待分班";
+  const studentAssessments = academic
+    ? state.assessments
+      .filter((item) => item.status === "published" && item.rosterStudentIds.includes(studentId))
+      .sort((a, b) => new Date(b.assessedAt).getTime() - new Date(a.assessedAt).getTime())
+    : [];
 
   if (!user || !profile) return <EmptyState title="学生不存在" action={<Button onClick={() => navigate(`${basePath}/students`)}>返回学生列表</Button>} />;
 
@@ -56,8 +102,14 @@ export function OperatorStudentDetail({
         platform.updateStudent({
           studentId,
           patch: (academic
-            ? { level: form.level, program: form.program, learningGoal: form.learningGoal, notes: form.notes }
-            : form) as Partial<PlatformUser & StudentProfile>,
+            ? { level: form.level, program: form.program, timeZone: form.timeZone, learningGoal: form.learningGoal, notes: form.notes }
+            : {
+              name: form.name,
+              phone: form.phone,
+              timeZone: form.timeZone,
+              level: form.level,
+              program: form.program
+            }) as Partial<PlatformUser & StudentProfile>,
           actorId: operator.id,
           reason: academic ? "学校教务更新本校学生档案" : "教学管理更新学生档案"
         }),
@@ -66,74 +118,132 @@ export function OperatorStudentDetail({
     if (result.ok) setEditing(false);
   }
 
+  function openEdit() {
+    if (!user || !profile) return;
+    setForm({
+      name: user.name,
+      phone: user.phone ?? "",
+      timeZone: user.timeZone,
+      level: profile.level,
+      program: profile.program,
+      learningGoal: profile.learningGoal,
+      notes: profile.notes
+    });
+    setEditing(true);
+  }
+
   return (
     <>
+      <Button className="detail-back-button" variant="ghost" onClick={() => navigate(`${basePath}/students?tab=students`)}>
+        <ArrowLeft size={18} /> 返回学生列表
+      </Button>
       <PageHeader
         eyebrow="Student profile"
         title={user.name}
-        description={`${profile.level} · ${profile.program} · ${user.timeZone}`}
+        description={academic
+          ? `${profile.level} · ${profile.program} · ${user.timeZone}`
+          : `${profile.level} · ${profile.program}`}
         actions={
-          <>
-            <Button variant="secondary" onClick={() => navigate(`${basePath}/scheduling`)}><CalendarPlus size={16} /> 去代约课程</Button>
-            {editing ? <Button onClick={save}><Save size={16} /> 保存档案</Button> : <Button onClick={() => setEditing(true)}><Pencil size={16} /> 编辑档案</Button>}
-          </>
+          <Button onClick={openEdit}><Pencil size={16} /> 编辑档案</Button>
         }
       />
 
-      <section className="student-profile-hero">
-        <Avatar label={user.avatar} size="lg" tone="purple" />
-        <div>
-          <div className="profile-name-row"><h2>{user.name}</h2><Badge tone="mint">{user.status === "active" ? "活跃" : "暂停"}</Badge></div>
-          <p>{profile.learningGoal}</p>
-          <div className="profile-tags">{profile.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
+      {academic ? (
+        <section className="student-profile-hero">
+          <Avatar label={user.avatar} size="lg" tone="purple" />
+          <div>
+            <p className="profile-summary-line">{profile.learningGoal}</p>
+            <div className="profile-tags">{profile.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
+          </div>
+          <div className="profile-joined">
+            <small>加入时间</small>
+            <strong>{formatDateTime(profile.joinedAt, state.ui.timeZone, state.ui.language)}</strong>
+            <span>{relativeTime(profile.joinedAt, state.ui.language)}</span>
+          </div>
+        </section>
+      ) : profile.tags.length > 0 && (
+        <div className="profile-tags operator-profile-tags">
+          {profile.tags.map((tag) => <span key={tag}>{tag}</span>)}
         </div>
-        <div className="profile-joined">
-          <small>加入时间</small>
-          <strong>{formatDateTime(profile.joinedAt, state.ui.timeZone, state.ui.language)}</strong>
-          <span>{relativeTime(profile.joinedAt, state.ui.language)}</span>
+      )}
+
+      {academic ? (
+        <section className="stat-grid stat-grid-4">
+          <StatCard label="待上课程" value={metrics.upcoming.length} detail="已预约的未来课堂" icon={<CalendarPlus size={20} />} tone="purple" />
+          <StatCard label="互动完成" value={metrics.completedSetIds.size} detail={`${metrics.attempts.length} 次作答`} icon={<TrendingUp size={20} />} tone="mint" />
+          <StatCard label="平均得分" value={metrics.averageScore ? Math.round(metrics.averageScore) : "--"} detail="所有互动记录" icon={<Star size={20} />} tone="orange" />
+          <StatCard label="练习时长" value={`${metrics.totalStudyMinutes} 分`} detail="互动累计用时" icon={<CalendarPlus size={20} />} tone="blue" />
+        </section>
+      ) : (
+        <section className="stat-grid stat-grid-4">
+          <StatCard className="profile-fact-card" label="电话号码" value={user.phone || "未填写"} icon={<Phone size={20} />} tone="blue" />
+          <StatCard className="profile-fact-card" label="时区" value={timeZoneLabel(user.timeZone)} icon={<Globe2 size={20} />} tone="purple" />
+          <StatCard className="profile-fact-card profile-class-card" label="所在班级" value={`${studentClasses.length} 个班`} detail={studentClassSummary} icon={<UsersRound size={20} />} tone="orange" />
+          <StatCard label="待上课程" value={operatorUpcomingCourses.length} icon={<CalendarPlus size={20} />} tone="mint" />
+        </section>
+      )}
+
+      {academic ? (
+        <div className="section-heading-row">
+          <Tabs
+            value={tab}
+            onChange={setTab}
+            items={[
+              { value: "bookings", label: "预约记录", count: metrics.bookings.length },
+              { value: "results", label: "成绩与结果", count: metrics.attempts.length + studentAssessments.length },
+              { value: "profile", label: "档案信息" }
+            ]}
+          />
         </div>
-      </section>
-
-      <section className="stat-grid stat-grid-4">
-        <StatCard label="待上课程" value={metrics.upcoming.length} detail="已预约的未来课堂" icon={<CalendarPlus size={20} />} tone="purple" />
-        <StatCard label="互动完成" value={metrics.completedSetIds.size} detail={`${metrics.attempts.length} 次作答`} icon={<TrendingUp size={20} />} tone="mint" />
-        <StatCard label="平均得分" value={metrics.averageScore ? Math.round(metrics.averageScore) : "--"} detail="所有互动记录" icon={<Star size={20} />} tone="orange" />
-        <StatCard label="练习时长" value={`${metrics.totalStudyMinutes} 分`} detail="互动累计用时" icon={<CalendarPlus size={20} />} tone="blue" />
-      </section>
-
-      <div className="section-heading-row">
-        <Tabs
-          value={tab}
-          onChange={setTab}
-          items={[
-            { value: "bookings", label: "预约记录", count: metrics.bookings.length },
-            { value: "results", label: "成绩与结果", count: metrics.attempts.length + studentAssessments.length },
-            { value: "profile", label: "档案信息" }
-          ]}
-        />
-      </div>
+      ) : (
+        <div className="section-heading-row operator-course-heading">
+          <h2>课程记录</h2>
+          <span>{operatorCourseRows.length} 节</span>
+        </div>
+      )}
 
       {tab === "bookings" && (
         <Card className="student-booking-table-card">
-          <div className="data-table">
-            <div className="data-table-head"><span>课程</span><span>时间</span><span>来源</span><span>状态</span></div>
-            {metrics.bookings.map((booking) => {
-              const session = getSession(state, booking.sessionId);
-              const lesson = session ? getLesson(state, session.lessonId) : undefined;
-              return (
-                <div className="data-table-row" key={booking.id}>
-                  <span><strong>{lesson?.title}</strong><small>{session?.title}</small></span>
-                  <span>{session ? formatDateTime(session.startAt, state.ui.timeZone, state.ui.language) : "-"}</span>
-                  <span><Badge tone={booking.source === "operator" || booking.source === "academic" ? "orange" : "mint"}>{booking.source === "academic" ? "学校教务代约" : booking.source === "operator" ? "教学管理代约" : "学生预约"}</Badge></span>
-                  <span><Badge tone="mint">已预约</Badge></span>
-                </div>
-              );
-            })}
-          </div>
+          {academic ? (
+            <div className="data-table">
+              <div className="data-table-head"><span>课程</span><span>时间</span><span>来源</span><span>状态</span></div>
+              {metrics.bookings.map((booking) => {
+                const session = getSession(state, booking.sessionId);
+                const lesson = session ? getLesson(state, session.lessonId) : undefined;
+                return (
+                  <div className="data-table-row" key={booking.id}>
+                    <span><strong>{lesson?.title}</strong><small>{session?.title}</small></span>
+                    <span>{session ? formatDateTime(session.startAt, state.ui.timeZone, state.ui.language) : "-"}</span>
+                    <span><Badge tone={booking.source === "operator" || booking.source === "academic" ? "orange" : "mint"}>{booking.source === "academic" ? "学校教务代约" : booking.source === "operator" ? "教学管理代约" : "学生预约"}</Badge></span>
+                    <span><Badge tone="mint">已预约</Badge></span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="data-table operator-course-table">
+              <div className="data-table-head"><span>课程</span><span>时间</span><span>班级 / 教师</span><span>状态</span></div>
+              {operatorCourseRows.map(({ session, booking }) => {
+                const lesson = getLesson(state, session.lessonId);
+                const classItem = state.classes.find((item) => item.id === session.classId);
+                const teacher = getUser(state, session.teacherId);
+                const status = operatorCourseStatus(session, booking);
+                return (
+                  <div className="data-table-row" key={session.id}>
+                    <span><strong>{lesson?.title ?? session.title}</strong><small>{session.title}</small></span>
+                    <span>{formatDateTime(session.startAt, state.ui.timeZone, state.ui.language)}</span>
+                    <span><strong>{classItem?.name ?? session.className}</strong><small>{teacher?.name ?? "未分配教师"}</small></span>
+                    <span><Badge tone={status.tone}>{status.label}</Badge></span>
+                  </div>
+                );
+              })}
+              {operatorCourseRows.length === 0 && <p className="muted-copy operator-course-empty">暂无课程记录</p>}
+            </div>
+          )}
         </Card>
       )}
 
-      {tab === "results" && (
+      {academic && tab === "results" && (
         <div className="operator-grade-results">
           <Card className="operator-formal-grades">
             <div className="grade-table-heading">
@@ -183,39 +293,63 @@ export function OperatorStudentDetail({
         </div>
       )}
 
-      {tab === "profile" && (
+      {academic && tab === "profile" && (
         <Card className="profile-edit-card">
-          {editing ? (
-            <div className="editor-grid">
-              <Field label="姓名"><TextInput value={form.name} disabled={academic} onChange={(event) => setForm((value) => ({ ...value, name: event.target.value }))} /></Field>
-              <Field label="联系方式"><TextInput value={form.phone} disabled={academic} onChange={(event) => setForm((value) => ({ ...value, phone: event.target.value }))} /></Field>
-              <Field label="状态"><Select value={form.status} disabled={academic} onChange={(event) => setForm((value) => ({ ...value, status: event.target.value as "active" | "paused" }))}><option value="active">活跃</option><option value="paused">暂停</option></Select></Field>
-              <Field label="等级"><TextInput value={form.level} onChange={(event) => setForm((value) => ({ ...value, level: event.target.value }))} /></Field>
-              <Field label="课程项目" className="field-span-2"><TextInput value={form.program} onChange={(event) => setForm((value) => ({ ...value, program: event.target.value }))} /></Field>
-              <Field label="学习目标" className="field-span-2"><TextInput value={form.learningGoal} onChange={(event) => setForm((value) => ({ ...value, learningGoal: event.target.value }))} /></Field>
-              <Field label={academic ? "学校教务备注" : "教学管理备注"} className="field-span-2"><textarea className="input textarea" value={form.notes} onChange={(event) => setForm((value) => ({ ...value, notes: event.target.value }))} /></Field>
-            </div>
-          ) : (
-            <div className="profile-detail-grid">
-              <div><small>联系方式</small><strong>{user.phone}</strong></div>
-              <div><small>时区</small><strong>{user.timeZone}</strong></div>
-              <div><small>等级</small><strong>{profile.level}</strong></div>
-              <div><small>课程项目</small><strong>{profile.program}</strong></div>
-              <div className="span-2"><small>学习目标</small><strong>{profile.learningGoal}</strong></div>
-              <div className="span-2"><small>{academic ? "学校教务备注" : "教学管理备注"}</small><strong>{profile.notes}</strong></div>
-            </div>
-          )}
+          <div className="profile-detail-grid">
+            <div><small>联系方式</small><strong>{user.phone || "未填写"}</strong></div>
+            <div><small>App 绑定</small><strong>{appAccount ? `已绑定 · ${appAccount}` : "未绑定"}</strong></div>
+            <div><small>时区</small><strong>{user.timeZone}</strong></div>
+            <div><small>等级</small><strong>{profile.level}</strong></div>
+            <div><small>课程项目</small><strong>{profile.program}</strong></div>
+            <div><small>加入时间</small><strong>{formatDateTime(profile.joinedAt, state.ui.timeZone, state.ui.language)}</strong></div>
+            <div className="span-2"><small>所在班级</small><strong>{studentClassSummary}</strong></div>
+            <div className="span-2"><small>学习目标</small><strong>{profile.learningGoal}</strong></div>
+            {academic && <div className="span-2"><small>学校教务备注</small><strong>{profile.notes}</strong></div>}
+          </div>
         </Card>
       )}
 
-      <AssessmentCreateModal
-        open={createAssessmentOpen}
-        defaultClassId={studentClassIds[0] ?? ""}
-        allowedClassIds={studentClassIds}
-        onClose={() => setCreateAssessmentOpen(false)}
-        onCreated={setScoreAssessmentId}
-      />
-      {scoreAssessmentId && (
+      <Modal
+        open={editing}
+        title="编辑学生档案"
+        onClose={() => setEditing(false)}
+        width="720px"
+        footer={
+          <div className="modal-footer-split modal-footer-end">
+            <div>
+              <Button variant="ghost" onClick={() => setEditing(false)}>取消</Button>
+              <Button disabled={!form.name.trim()} onClick={save}><Save size={16} /> 保存档案</Button>
+            </div>
+          </div>
+        }
+      >
+        <div className="editor-grid">
+          <Field label="姓名"><TextInput value={form.name} disabled={academic} onChange={(event) => setForm((value) => ({ ...value, name: event.target.value }))} /></Field>
+          <Field label="联系方式"><TextInput value={form.phone} disabled={academic} onChange={(event) => setForm((value) => ({ ...value, phone: event.target.value }))} /></Field>
+          <Field label="等级"><TextInput value={form.level} onChange={(event) => setForm((value) => ({ ...value, level: event.target.value }))} /></Field>
+          <Field label="时区">
+            <Select value={form.timeZone} onChange={(event) => setForm((value) => ({ ...value, timeZone: event.target.value }))}>
+              <option value="Asia/Jakarta">GMT+7 雅加达</option>
+              <option value="Asia/Shanghai">GMT+8 上海</option>
+              <option value="Asia/Singapore">GMT+8 新加坡</option>
+            </Select>
+          </Field>
+          <Field label="课程项目" className="field-span-2"><TextInput value={form.program} onChange={(event) => setForm((value) => ({ ...value, program: event.target.value }))} /></Field>
+          {academic && <Field label="学习目标" className="field-span-2"><textarea className="input textarea" value={form.learningGoal} onChange={(event) => setForm((value) => ({ ...value, learningGoal: event.target.value }))} /></Field>}
+          {academic && <Field label="学校教务备注" className="field-span-2"><textarea className="input textarea" value={form.notes} onChange={(event) => setForm((value) => ({ ...value, notes: event.target.value }))} /></Field>}
+        </div>
+      </Modal>
+
+      {academic && (
+        <AssessmentCreateModal
+          open={createAssessmentOpen}
+          defaultClassId={studentClassIds[0] ?? ""}
+          allowedClassIds={studentClassIds}
+          onClose={() => setCreateAssessmentOpen(false)}
+          onCreated={setScoreAssessmentId}
+        />
+      )}
+      {academic && scoreAssessmentId && (
         <AssessmentScoresModal assessmentId={scoreAssessmentId} focusStudentId={studentId} onClose={() => setScoreAssessmentId("")} />
       )}
     </>

@@ -1,19 +1,38 @@
-import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { CalendarClock, CalendarPlus, GraduationCap, Inbox, Layers3, Plus, Search, UsersRound, WandSparkles } from "lucide-react";
+import { CalendarClock, CalendarPlus, Filter, GraduationCap, Inbox, Layers3, Search, UsersRound, WandSparkles, X } from "lucide-react";
 import { platform } from "../../lib/platform";
 import { usePlatformStore } from "../../store/usePlatformStore";
-import { currentUser, fillRate, getBookedCount, getLesson, getSession, getWaitlist } from "../../lib/domain";
+import { currentUser, getBookedCount, getLesson, getSchoolTimeZone, getSession } from "../../lib/domain";
 import { getAcademicSchoolId, workspaceState } from "../../lib/academicScope";
 import { formatDateTime, inputDateTime } from "../../lib/format";
 import { Badge, Button, Card, EmptyState, Field, Modal, PageHeader, ProgressBar, Select, Tabs, TextInput } from "../../components/ui";
-import { ClassSessionCard } from "../../components/ClassSessionCard";
+import { OperatorSessionCard } from "../../components/OperatorSessionCard";
+import { OperatorSessionRosterModal } from "../../components/OperatorSessionRosterModal";
 import { SeriesSessionDots } from "../../components/SeriesSessionDots";
 import type { ClassSession } from "../../domain/types";
 
 type ScheduleTab = "sessions" | "series";
-type CreateMode = "single" | "series" | null;
+type SessionTimeTab = "upcoming" | "history" | "all";
+type CreateMode = "single" | "series" | "edit" | "view" | null;
+type SessionForm = {
+  title: string;
+  schoolId: string;
+  classId: string;
+  lessonId: string;
+  folderId: string;
+  lessonIds: string[];
+  sessionSchedule: Record<string, string>;
+  manualScheduleIds: string[];
+  teacherId: string;
+  startAt: string;
+  durationMinutes: number;
+  capacity: number;
+  intervalWeeks: number;
+  roomLabel: string;
+  description: string;
+};
 
 /** 按首节课时间与课节间隔预排每一节的日期时间；只做预填，创建前可以逐节调整。 */
 function buildAutoSchedule(lessonIds: string[], startAt: string, intervalWeeks: number) {
@@ -43,6 +62,18 @@ function mergeAutoSchedule(
   }, {});
 }
 
+/** 排课按学校当地时间看日期，跨时区学校不能用浏览器本地日期直接比较。 */
+function dateKeyInTimeZone(value: string, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date(value));
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
 export function OperatorScheduling({
   academic = false,
   basePath = "/operator"
@@ -52,34 +83,106 @@ export function OperatorScheduling({
 } = {}) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { state: rawState, run } = usePlatformStore();
   const user = currentUser(rawState);
   const state = useMemo(() => (academic ? workspaceState(rawState, getAcademicSchoolId(rawState, user)) : rawState), [academic, rawState, user]);
-  const [tab, setTab] = useState<ScheduleTab>("sessions");
+  const [tab] = useState<ScheduleTab>("sessions");
+  const [sessionTimeTab, setSessionTimeTab] = useState<SessionTimeTab>("upcoming");
   const [query, setQuery] = useState("");
+  const [schoolFilter, setSchoolFilter] = useState("all");
+  const [classFilter, setClassFilter] = useState("all");
+  const [teacherFilter, setTeacherFilter] = useState("all");
+  const [dateFilter, setDateFilter] = useState("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filterPopoverRef = useRef<HTMLDivElement>(null);
+  const tabBeforeSearchRef = useRef<SessionTimeTab | null>(null);
   const [createMode, setCreateMode] = useState<CreateMode>(null);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [cancelSessionId, setCancelSessionId] = useState<string | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [rosterSessionId, setRosterSessionId] = useState<string | null>(null);
   const [scheduleSeriesId, setScheduleSeriesId] = useState<string | null>(null);
   const [seriesTimes, setSeriesTimes] = useState<Record<string, string>>({});
-  const defaultStart = new Date(Date.now() + 24 * 60 * 60 * 1000);
-  defaultStart.setMinutes(0, 0, 0);
-  const [form, setForm] = useState({
-    title: "",
-    schoolId: academic ? getAcademicSchoolId(rawState, user) : state.schools.find((item) => item.status === "active")?.id ?? "",
-    classId: state.classes.find((item) => item.status === "active")?.id ?? "__new",
-    className: "",
-    lessonId: state.lessons[0]?.id ?? "",
-    folderId: state.lessons[0]?.folderId ?? state.folders[0]?.id ?? "",
-    lessonIds: [] as string[],
-    sessionSchedule: {} as Record<string, string>,
-    manualScheduleIds: [] as string[],
-    teacherId: state.users.find((item) => item.role === "teacher")?.id ?? "",
-    startAt: inputDateTime(defaultStart),
-    durationMinutes: 40,
-    capacity: 30,
-    intervalWeeks: 1,
-    roomLabel: "大班教室 A",
-    description: ""
-  });
+  const requestedSchoolId = academic ? "" : searchParams.get("school") ?? "";
+  const initialSchoolId = academic
+    ? getAcademicSchoolId(rawState, user)
+    : state.schools.find((school) => school.id === requestedSchoolId && school.status === "active")?.id
+      ?? state.schools.find((school) =>
+        school.status === "active" &&
+        state.classes.some((classItem) => classItem.status === "active" && classItem.schoolId === school.id)
+      )?.id ?? state.schools.find((school) => school.status === "active")?.id ?? "";
+  const initialClass = state.classes.find((item) => item.status === "active" && item.schoolId === initialSchoolId)
+    ?? state.classes.find((item) => item.status === "active");
+
+  function buildCreateFormDefaults(): SessionForm {
+    const filteredClass = classFilter !== "all"
+      ? state.classes.find((item) => item.id === classFilter && item.status === "active")
+      : undefined;
+    const targetSchoolId = filteredClass?.schoolId ?? (schoolFilter !== "all" ? schoolFilter : initialSchoolId);
+    const targetClass = filteredClass
+      ?? state.classes.find((item) => item.status === "active" && item.schoolId === targetSchoolId)
+      ?? initialClass
+      ?? state.classes.find((item) => item.status === "active");
+    const firstLesson = state.lessons[0];
+    const start = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    start.setMinutes(0, 0, 0);
+    const teacherId = teacherFilter !== "all"
+      ? teacherFilter
+      : targetClass?.teacherId ?? state.users.find((item) => item.role === "teacher")?.id ?? "";
+    return {
+      title: "",
+      schoolId: targetClass?.schoolId ?? targetSchoolId,
+      classId: targetClass?.id ?? "",
+      lessonId: firstLesson?.id ?? "",
+      folderId: firstLesson?.folderId ?? state.folders[0]?.id ?? "",
+      lessonIds: [],
+      sessionSchedule: {},
+      manualScheduleIds: [],
+      teacherId,
+      startAt: inputDateTime(start),
+      durationMinutes: 40,
+      capacity: 30,
+      intervalWeeks: 1,
+      roomLabel: "",
+      description: ""
+    };
+  }
+
+  const [form, setForm] = useState<SessionForm>(() => buildCreateFormDefaults());
+
+  useEffect(() => {
+    if (searchParams.get("create") !== "1") return;
+    openCreate("single");
+    const next = new URLSearchParams(searchParams);
+    next.delete("create");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const sessionId = searchParams.get("edit");
+    if (!sessionId) return;
+    openEditSession(sessionId);
+    const next = new URLSearchParams(searchParams);
+    next.delete("edit");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (!filtersOpen) return;
+    function handlePointerDown(event: PointerEvent) {
+      if (!filterPopoverRef.current?.contains(event.target as Node)) setFiltersOpen(false);
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setFiltersOpen(false);
+    }
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [filtersOpen]);
 
   const requestKindLabels: Record<string, string> = {
     reschedule: "申请改期",
@@ -90,36 +193,242 @@ export function OperatorScheduling({
   };
   const pendingRequests = state.changeRequests.filter((request) => request.status === "pending");
 
+  const normalizedQuery = query.trim().toLowerCase();
   const sessions = state.sessions
-    .filter((session) => !query || session.title.toLowerCase().includes(query.toLowerCase()) || session.className.toLowerCase().includes(query.toLowerCase()) || getLesson(state, session.lessonId)?.title.toLowerCase().includes(query.toLowerCase()))
+    .filter((session) => {
+      if (schoolFilter !== "all" && session.schoolId !== schoolFilter) return false;
+      if (classFilter !== "all" && session.classId !== classFilter) return false;
+      if (teacherFilter !== "all" && session.teacherId !== teacherFilter) return false;
+      if (dateFilter && dateKeyInTimeZone(session.startAt, getSchoolTimeZone(state, session.schoolId)) !== dateFilter) {
+        return false;
+      }
+      if (!normalizedQuery) return true;
+      const teacher = state.users.find((candidate) => candidate.id === session.teacherId);
+      return [session.title, session.className, getLesson(state, session.lessonId)?.title ?? "", teacher?.name ?? ""]
+        .some((value) => value.toLowerCase().includes(normalizedQuery));
+    })
     .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+
+  const filterSchools = state.schools
+    .filter((school) => school.status === "active")
+    .sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+  const filterClasses = state.classes
+    .filter((item) => item.status === "active" && (schoolFilter === "all" || item.schoolId === schoolFilter))
+    .sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+  const filterTeachers = state.users
+    .filter(
+      (candidate) =>
+        candidate.role === "teacher" &&
+        (schoolFilter === "all" ||
+          state.schoolMemberships.some(
+            (membership) =>
+              membership.schoolId === schoolFilter &&
+              membership.userId === candidate.id &&
+              membership.role === "teacher" &&
+              membership.status === "active"
+          ))
+    )
+    .sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+  const hasActiveFilters = Boolean(query.trim() || dateFilter) ||
+    schoolFilter !== "all" ||
+    classFilter !== "all" ||
+    teacherFilter !== "all";
+  const activeFilterCount = [
+    !academic && schoolFilter !== "all",
+    classFilter !== "all",
+    teacherFilter !== "all",
+    Boolean(dateFilter)
+  ].filter(Boolean).length;
+  const selectedSchool = schoolFilter !== "all" ? filterSchools.find((school) => school.id === schoolFilter) : undefined;
+  const selectedClass = classFilter !== "all" ? filterClasses.find((item) => item.id === classFilter) : undefined;
+  const selectedTeacher = teacherFilter !== "all" ? filterTeachers.find((teacher) => teacher.id === teacherFilter) : undefined;
 
   const themeFolders = state.folders.filter(
     (folder) =>
+      folder.status === "published" &&
       state.lessons.filter((lesson) => lesson.folderId === folder.id && lesson.status === "published").length >= 2
   );
   const themeLessons = state.lessons.filter(
     (lesson) => lesson.folderId === form.folderId && lesson.status === "published"
   );
+  const activeAvailableClasses = state.classes.filter(
+    (item) => item.status === "active" && item.schoolId === form.schoolId
+  );
+  const currentFormClass = state.classes.find((item) => item.id === form.classId);
+  const availableClasses = currentFormClass && !activeAvailableClasses.some((item) => item.id === currentFormClass.id)
+    ? [...activeAvailableClasses, currentFormClass]
+    : activeAvailableClasses;
+  const activeFormTeachers = state.users
+    .filter((item) => item.role === "teacher")
+    .filter((teacher) =>
+      state.schoolMemberships.some(
+        (membership) =>
+          membership.schoolId === form.schoolId &&
+          membership.userId === teacher.id &&
+          membership.role === "teacher" &&
+          membership.status === "active"
+      )
+    );
+  const currentFormTeacher = state.users.find((item) => item.id === form.teacherId);
+  const availableTeachers = currentFormTeacher && !activeFormTeachers.some((item) => item.id === currentFormTeacher.id)
+    ? [...activeFormTeachers, currentFormTeacher]
+    : activeFormTeachers;
+  const singleSessions = sessions.filter((session) => session.source === "single");
+  const sessionTimeBoundary = Date.now();
+  const upcomingSingleSessions = singleSessions
+    .filter((session) => session.status !== "cancelled" && new Date(session.endAt).getTime() >= sessionTimeBoundary)
+    .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+  const historySingleSessions = singleSessions
+    .filter((session) => session.status === "cancelled" || new Date(session.endAt).getTime() < sessionTimeBoundary)
+    .sort((a, b) => new Date(b.startAt).getTime() - new Date(a.startAt).getTime());
+  const visibleSingleSessions = sessionTimeTab === "upcoming"
+    ? upcomingSingleSessions
+    : sessionTimeTab === "history"
+      ? historySingleSessions
+      : [...upcomingSingleSessions, ...historySingleSessions];
+  const allSingleSessions = state.sessions.filter((session) => session.source === "single");
+  const totalUpcomingSessionCount = allSingleSessions
+    .filter((session) => session.status !== "cancelled" && new Date(session.endAt).getTime() >= sessionTimeBoundary)
+    .length;
+  const totalHistorySessionCount = allSingleSessions
+    .filter((session) => session.status === "cancelled" || new Date(session.endAt).getTime() < sessionTimeBoundary)
+    .length;
+  const currentTabSessionCount = sessionTimeTab === "upcoming"
+    ? totalUpcomingSessionCount
+    : sessionTimeTab === "history"
+      ? totalHistorySessionCount
+      : allSingleSessions.length;
+  const showFilteredCount = hasActiveFilters && visibleSingleSessions.length !== currentTabSessionCount;
 
-  function openCreate(mode: Exclude<CreateMode, null>) {
+  function clearSessionFilters() {
+    setSchoolFilter("all");
+    setClassFilter("all");
+    setTeacherFilter("all");
+    setDateFilter("");
+  }
+
+  function changeSessionTimeTab(next: SessionTimeTab) {
+    setSessionTimeTab(next);
+    if (query.trim()) {
+      tabBeforeSearchRef.current = next === "all" ? null : next;
+    }
+  }
+
+  function changeQuery(next: string) {
+    const hadQuery = Boolean(query.trim());
+    const hasQuery = Boolean(next.trim());
+    if (!hadQuery && hasQuery) {
+      tabBeforeSearchRef.current = sessionTimeTab === "all" ? null : sessionTimeTab;
+      setSessionTimeTab("all");
+    } else if (hadQuery && !hasQuery && tabBeforeSearchRef.current) {
+      setSessionTimeTab(tabBeforeSearchRef.current);
+      tabBeforeSearchRef.current = null;
+    }
+    setQuery(next);
+  }
+
+  function loadSessionForm(sessionId: string) {
+    const session = getSession(state, sessionId);
+    if (!session) return false;
+    const lesson = getLesson(state, session.lessonId);
+    const durationMinutes = Math.max(
+      1,
+      Math.round((new Date(session.endAt).getTime() - new Date(session.startAt).getTime()) / 60_000)
+    );
+    setEditingSessionId(session.id);
+    setForm({
+      ...buildCreateFormDefaults(),
+      title: session.title,
+      schoolId: session.schoolId,
+      classId: session.classId,
+      lessonId: session.lessonId,
+      folderId: lesson?.folderId ?? "",
+      teacherId: session.teacherId,
+      startAt: inputDateTime(session.startAt),
+      durationMinutes,
+      capacity: session.capacity,
+      roomLabel: session.roomLabel
+    });
+    return true;
+  }
+
+  function openEditSession(sessionId: string) {
+    if (loadSessionForm(sessionId)) setCreateMode("edit");
+  }
+
+  function openViewSession(sessionId: string) {
+    if (loadSessionForm(sessionId)) setCreateMode("view");
+  }
+
+  function closeFormModal() {
+    setCreateMode(null);
+    setEditingSessionId(null);
+  }
+
+  function openCancelSession(sessionId: string) {
+    setCancelSessionId(sessionId);
+    setCancelReason("");
+  }
+
+  function confirmSessionCancel() {
+    if (!cancelSessionId) return;
+    const result = run(
+      () =>
+        platform.cancelSession({
+          sessionId: cancelSessionId,
+          actorId: user.id,
+          reason: cancelReason.trim()
+        }),
+      "课堂已取消"
+    );
+    if (result.ok) {
+      setCancelSessionId(null);
+      setCancelReason("");
+    }
+  }
+
+  function canRescheduleSession(session: ClassSession) {
+    return session.status !== "cancelled" && new Date(session.startAt).getTime() > Date.now();
+  }
+
+  function canCancelSession(session: ClassSession) {
+    return session.status !== "cancelled" && new Date(session.endAt).getTime() >= Date.now();
+  }
+
+  function openCreate(mode: "single" | "series") {
+    const defaults = buildCreateFormDefaults();
     if (mode === "series") {
-      const folderId = themeFolders.some((folder) => folder.id === form.folderId)
-        ? form.folderId
+      const folderId = themeFolders.some((folder) => folder.id === defaults.folderId)
+        ? defaults.folderId
         : themeFolders[0]?.id ?? "";
       const defaultLessonIds = state.lessons
         .filter((lesson) => lesson.folderId === folderId && lesson.status === "published")
         .slice(0, 2)
         .map((lesson) => lesson.id);
-      setForm((value) => ({
-        ...value,
+      setForm({
+        ...defaults,
         folderId,
         lessonIds: defaultLessonIds,
-        sessionSchedule: buildAutoSchedule(defaultLessonIds, value.startAt, value.intervalWeeks),
+        sessionSchedule: buildAutoSchedule(defaultLessonIds, defaults.startAt, defaults.intervalWeeks),
         manualScheduleIds: []
-      }));
+      });
+    } else {
+      setForm(defaults);
     }
+    setEditingSessionId(null);
     setCreateMode(mode);
+  }
+
+  function changeSchool(schoolId: string) {
+    const nextClass = state.classes.find(
+      (item) => item.status === "active" && item.schoolId === schoolId
+    );
+    setForm((value) => ({
+      ...value,
+      schoolId,
+      classId: nextClass?.id ?? "",
+      teacherId: nextClass?.teacherId ?? ""
+    }));
   }
 
   function chooseTheme(folderId: string) {
@@ -198,6 +507,7 @@ export function OperatorScheduling({
   }
 
   function create() {
+    if (!form.classId || !form.teacherId) return;
     const start = new Date(form.startAt);
     const end = new Date(start.getTime() + Number(form.durationMinutes) * 60_000);
     if (createMode === "single") {
@@ -208,8 +518,7 @@ export function OperatorScheduling({
             title: form.title || `${getLesson(state, form.lessonId)?.title} · 大班课`,
             lessonId: form.lessonId,
             teacherId: form.teacherId,
-            classId: form.classId === "__new" ? undefined : form.classId,
-            className: form.classId === "__new" ? (form.className.trim() || "待分配班级") : undefined,
+            classId: form.classId,
             startAt: start.toISOString(),
             endAt: end.toISOString(),
             capacity: Number(form.capacity),
@@ -220,8 +529,36 @@ export function OperatorScheduling({
           }),
         t("operator.sessionCreated")
       );
-      if (result.ok) setCreateMode(null);
-    } else {
+      if (result.ok) closeFormModal();
+      return;
+    }
+    if (createMode === "edit") {
+      if (!editingSessionId) return;
+      const result = run(
+        () =>
+          platform.updateSession({
+            sessionId: editingSessionId,
+            patch: {
+              title: form.title.trim() || `${getLesson(state, form.lessonId)?.title} · 大班课`,
+              classId: form.classId,
+              lessonId: form.lessonId,
+              teacherId: form.teacherId,
+              startAt: start.toISOString(),
+              endAt: end.toISOString(),
+              capacity: Number(form.capacity),
+              bookingCloseAt: new Date(start.getTime() - 30 * 60_000).toISOString(),
+              cancelCloseAt: new Date(start.getTime() - 2 * 60 * 60_000).toISOString(),
+              roomLabel: form.roomLabel
+            },
+            actorId: user.id,
+            reason: academic ? "学校教务调整本校课次" : "教学管理调整课次"
+          }),
+        "课次已更新"
+      );
+      if (result.ok) closeFormModal();
+      return;
+    }
+    if (createMode === "series") {
       if (form.lessonIds.length < 2) return;
       if (form.lessonIds.some((lessonId) => !form.sessionSchedule[lessonId])) return;
       const sessionSchedule = form.lessonIds.map((lessonId) => ({
@@ -233,9 +570,8 @@ export function OperatorScheduling({
         () =>
           platform.createSeries({
             schoolId: form.schoolId,
-            title: form.title || `${themeName} · 系列班`,
-            classId: form.classId === "__new" ? undefined : form.classId,
-            className: form.classId === "__new" ? (form.className.trim() || "待分配班级") : undefined,
+            title: form.title || `${themeName} · 系列课程`,
+            classId: form.classId,
             folderId: form.folderId,
             lessonIds: form.lessonIds,
             sessionSchedule,
@@ -250,11 +586,12 @@ export function OperatorScheduling({
           }),
         t("operator.seriesCreated")
       );
-      if (result.ok) setCreateMode(null);
+      if (result.ok) closeFormModal();
     }
   }
 
   const scheduleSeries = state.series.find((item) => item.id === scheduleSeriesId);
+  const cancellingSession = state.sessions.find((session) => session.id === cancelSessionId);
 
   /** 打开某系列班的时间配置：先把每个课次的当前时间填进表单。 */
   function openSeriesSchedule(seriesId: string) {
@@ -305,9 +642,11 @@ export function OperatorScheduling({
     if (result.ok) setScheduleSeriesId(null);
   }
 
+  const isViewingSession = createMode === "view";
+
   return (
     <>
-      {pendingRequests.length > 0 && (
+      {academic && pendingRequests.length > 0 && (
         <Card className="teacher-request-panel">
           <div className="card-heading">
             <div>
@@ -355,48 +694,255 @@ export function OperatorScheduling({
       )}
 
       <PageHeader
-        eyebrow="Scheduling"
+        eyebrow="Course scheduling"
         title={t("operator.sessionTitle")}
-        description={academic ? "学校教务统一维护本校班次时间、教师、容量、预约与取消截止时间。" : "教学管理统一维护班次时间、教师、容量、预约与取消截止时间。"}
-        actions={
-          <>
-            <Button variant="secondary" onClick={() => openCreate("series")}><Layers3 size={17} /> {t("operator.newSeries")}</Button>
-            <Button onClick={() => openCreate("single")}><CalendarPlus size={17} /> {t("operator.newSession")}</Button>
-          </>
-        }
+        description={academic ? "学校教务统一维护本校课次时间、授课教师、容量与预约规则。" : "从已有班级安排单次课次；班级名单在「班级与学生」中维护。"}
       />
 
-      <Card className="content-filter-bar">
-        <Tabs
-          value={tab}
-          onChange={setTab}
-          items={[
-            { value: "sessions", label: "单次班次", count: sessions.filter((session) => session.source === "single").length },
-            { value: "series", label: "系列班", count: state.series.length }
-          ]}
-        />
-        <div className="search-box">
-          <Search size={17} />
-          <TextInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索班次或课节" />
+      <Card className="operator-schedule-filter-card">
+        <div className="operator-schedule-filter-top">
+          <div className="search-box">
+            <Search size={17} />
+            <TextInput
+              value={query}
+              onChange={(event) => changeQuery(event.target.value)}
+              placeholder="搜索课次、班级、教师或课节"
+            />
+            {query && (
+              <button
+                type="button"
+                className="operator-schedule-search-clear"
+                aria-label="清除搜索"
+                onClick={() => changeQuery("")}
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          {tab === "sessions" && (
+            <div className="operator-schedule-filter-menu" ref={filterPopoverRef}>
+              <Button
+                variant="secondary"
+                className={`operator-schedule-filter-toggle${activeFilterCount ? " is-active" : ""}`}
+                aria-expanded={filtersOpen}
+                aria-controls={filtersOpen ? "operator-schedule-filter-panel" : undefined}
+                onClick={() => setFiltersOpen((value) => !value)}
+              >
+                <Filter size={16} />
+                筛选
+                {activeFilterCount > 0 && (
+                  <span className="operator-schedule-filter-count">{activeFilterCount}</span>
+                )}
+              </Button>
+              {filtersOpen && (
+                <div
+                  className="operator-schedule-filter-popover"
+                  id="operator-schedule-filter-panel"
+                  role="group"
+                  aria-label="排课筛选"
+                >
+                  <div className="operator-schedule-filter-popover-head">
+                    <div>
+                      <strong>筛选课次</strong>
+                      <small>{academic ? "按班级、教师或日期缩小范围" : "按学校、班级、教师或日期缩小范围"}</small>
+                    </div>
+                    <Button size="icon" variant="ghost" aria-label="关闭筛选" onClick={() => setFiltersOpen(false)}>
+                      <X size={16} />
+                    </Button>
+                  </div>
+                  <div className="operator-schedule-filter-grid">
+                    {!academic && (
+                      <Field label="学校" className="operator-schedule-school-field">
+                        <Select
+                          aria-label="按学校筛选"
+                          value={schoolFilter}
+                          onChange={(event) => {
+                            setSchoolFilter(event.target.value);
+                            setClassFilter("all");
+                            setTeacherFilter("all");
+                          }}
+                        >
+                          <option value="all">全部学校</option>
+                          {filterSchools.map((school) => (
+                            <option key={school.id} value={school.id}>{school.name}</option>
+                          ))}
+                        </Select>
+                      </Field>
+                    )}
+                    <Field label="班级" className="operator-schedule-class-field">
+                      <Select
+                        aria-label="按班级筛选"
+                        value={classFilter}
+                        onChange={(event) => setClassFilter(event.target.value)}
+                      >
+                        <option value="all">全部班级</option>
+                        {filterClasses.map((classItem) => (
+                          <option key={classItem.id} value={classItem.id}>{classItem.name}</option>
+                        ))}
+                      </Select>
+                    </Field>
+                    <Field label="教师" className="operator-schedule-teacher-field">
+                      <Select
+                        aria-label="按教师筛选"
+                        value={teacherFilter}
+                        onChange={(event) => setTeacherFilter(event.target.value)}
+                      >
+                        <option value="all">全部教师</option>
+                        {filterTeachers.map((teacher) => (
+                          <option key={teacher.id} value={teacher.id}>{teacher.name}</option>
+                        ))}
+                      </Select>
+                    </Field>
+                    <Field
+                      label="日期（学校当地）"
+                      hint="按学校当地日期匹配，不随查看者时区变化。"
+                      className="operator-schedule-date-field"
+                    >
+                      <TextInput
+                        aria-label="按日期筛选"
+                        type="date"
+                        value={dateFilter}
+                        onChange={(event) => {
+                          setDateFilter(event.target.value);
+                          if (event.target.value) changeSessionTimeTab("all");
+                        }}
+                      />
+                    </Field>
+                  </div>
+                  <div className="operator-schedule-filter-popover-foot">
+                    <Button variant="ghost" onClick={clearSessionFilters} disabled={activeFilterCount === 0}>
+                      重置筛选
+                    </Button>
+                    <Button variant="secondary" onClick={() => setFiltersOpen(false)}>完成</Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
+        {activeFilterCount > 0 && (
+          <div className="operator-schedule-active-filters" aria-label="已选筛选">
+            <span className="operator-schedule-active-filters-label">已选</span>
+            {selectedSchool && (
+              <button
+                type="button"
+                className="operator-schedule-filter-chip"
+                aria-label={`移除学校筛选：${selectedSchool.name}`}
+                onClick={() => {
+                  setSchoolFilter("all");
+                  setClassFilter("all");
+                  setTeacherFilter("all");
+                }}
+              >
+                {selectedSchool.name}
+                <X size={12} />
+              </button>
+            )}
+            {selectedClass && (
+              <button
+                type="button"
+                className="operator-schedule-filter-chip"
+                aria-label={`移除班级筛选：${selectedClass.name}`}
+                onClick={() => setClassFilter("all")}
+              >
+                {selectedClass.name}
+                <X size={12} />
+              </button>
+            )}
+            {selectedTeacher && (
+              <button
+                type="button"
+                className="operator-schedule-filter-chip"
+                aria-label={`移除教师筛选：${selectedTeacher.name}`}
+                onClick={() => setTeacherFilter("all")}
+              >
+                {selectedTeacher.name}
+                <X size={12} />
+              </button>
+            )}
+            {dateFilter && (
+              <button
+                type="button"
+                className="operator-schedule-filter-chip"
+                aria-label={`移除日期筛选：${dateFilter}`}
+                onClick={() => setDateFilter("")}
+              >
+                {dateFilter.replaceAll("-", "/")}
+                <X size={12} />
+              </button>
+            )}
+            <button type="button" className="operator-schedule-filter-clear" onClick={clearSessionFilters}>
+              清除筛选
+            </button>
+          </div>
+        )}
       </Card>
 
       {tab === "sessions" && (
+        <div className="section-heading-row schedule-time-tabs">
+          <Tabs
+            value={sessionTimeTab}
+            onChange={changeSessionTimeTab}
+            items={[
+              { value: "upcoming", label: "即将开始", count: upcomingSingleSessions.length },
+              { value: "history", label: "历史课程", count: historySingleSessions.length },
+              { value: "all", label: "全部", count: singleSessions.length }
+            ]}
+          />
+          <div className="schedule-time-tabs-actions">
+            {showFilteredCount && (
+              <span className="schedule-result-count">
+                筛选后 {visibleSingleSessions.length} / 共 {currentTabSessionCount} 个课次
+              </span>
+            )}
+            <Button className="operator-schedule-create-action" onClick={() => openCreate("single")}>
+              <CalendarPlus size={17} /> {t("operator.newSession")}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {tab === "sessions" && (
         <div className="session-list">
-          {sessions.filter((session) => session.source === "single").map((session) => (
-            <ClassSessionCard
+          {visibleSingleSessions.map((session) => (
+            <OperatorSessionCard
               key={session.id}
               state={state}
               session={session}
               actions={
                 <>
-                  <Button variant="ghost" onClick={() => navigate(`${basePath}/sessions/${session.id}`)}>名单与候补</Button>
-                  <Button variant="secondary" onClick={() => navigate(`${basePath}/sessions/${session.id}`)}>管理班次</Button>
+                  {(session.status === "cancelled" || new Date(session.endAt).getTime() < Date.now()) && (
+                    <Button variant="ghost" onClick={() => openViewSession(session.id)}>详情</Button>
+                  )}
+                  {canRescheduleSession(session) && (
+                    <Button variant="ghost" className="operator-session-edit" onClick={() => openEditSession(session.id)}>编辑</Button>
+                  )}
+                  <Button variant="ghost" onClick={() => setRosterSessionId(session.id)}>名单</Button>
+                  {canCancelSession(session) && (
+                    <Button
+                      variant="ghost"
+                      className="operator-session-cancel"
+                      onClick={() => openCancelSession(session.id)}
+                    >
+                      取消
+                    </Button>
+                  )}
                 </>
               }
             />
           ))}
-          {sessions.length === 0 && <EmptyState title="暂无匹配班次" />}
+          {visibleSingleSessions.length === 0 && (
+            <EmptyState
+              title={hasActiveFilters
+                ? "没有匹配的课次"
+                : sessionTimeTab === "upcoming"
+                  ? "暂无即将开始的课次"
+                  : sessionTimeTab === "history"
+                    ? "暂无历史课程"
+                    : "暂无匹配课次"}
+              description={hasActiveFilters ? "调整学校、班级、教师、日期或搜索条件后重试。" : undefined}
+            />
+          )}
         </div>
       )}
 
@@ -507,67 +1053,89 @@ export function OperatorScheduling({
 
       <Modal
         open={Boolean(createMode)}
-        title={createMode === "series" ? t("operator.newSeries") : t("operator.newSession")}
-        onClose={() => setCreateMode(null)}
+        title={isViewingSession ? "课次详情" : createMode === "edit" ? "编辑课次" : createMode === "series" ? t("operator.newSeries") : t("operator.newSession")}
+        onClose={closeFormModal}
         width="720px"
         footer={
-          <div className="modal-footer-split">
-            <small>
-              {createMode === "series"
-                ? `已选 ${form.lessonIds.length} 个课节 · ${form.lessonIds.filter((id) => form.sessionSchedule[id]).length} 个课次已排时间`
-                : "保存时会自动检查教师时间冲突"}
-            </small>
-            <div>
-              <Button variant="ghost" onClick={() => setCreateMode(null)}>取消</Button>
-              <Button
-                disabled={createMode === "series" && (form.lessonIds.length < 2 || form.lessonIds.some((id) => !form.sessionSchedule[id]))}
-                onClick={create}
-              >
-                创建并发布
-              </Button>
+          isViewingSession ? (
+            <div className="modal-footer-split">
+              <small>历史课次仅供查看，不可修改。</small>
+              <div>
+                <Button variant="secondary" onClick={closeFormModal}>关闭详情</Button>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="modal-footer-split">
+              <small>
+                {createMode === "series"
+                  ? `已选 ${form.lessonIds.length} 个课节 · ${form.lessonIds.filter((id) => form.sessionSchedule[id]).length} 个课次已排时间`
+                  : createMode === "edit"
+                    ? "保存时会重新校验班级与教师时间冲突，并通知已预约学生"
+                    : "排课时会检查班级与教师时间冲突"}
+              </small>
+              <div>
+                <Button variant="ghost" onClick={closeFormModal}>取消</Button>
+                <Button
+                  disabled={!form.classId || !form.teacherId || (createMode === "series" && (form.lessonIds.length < 2 || form.lessonIds.some((id) => !form.sessionSchedule[id])))}
+                  onClick={create}
+                >
+                  {createMode === "edit" ? "保存修改" : "确认排课"}
+                </Button>
+              </div>
+            </div>
+          )
         }
       >
-        <div className="editor-grid">
-          <Field label="班次标题" className="field-span-2">
-            <TextInput value={form.title} onChange={(event) => setForm((value) => ({ ...value, title: event.target.value }))} placeholder={createMode === "series" ? "留空则按主题名自动生成" : "留空则按课节名自动生成"} />
+        <div className={`editor-grid${isViewingSession ? " operator-session-form-view" : ""}`}>
+          <Field label="课次标题" className="field-span-2">
+            <TextInput
+              value={form.title}
+              readOnly={isViewingSession}
+              onChange={(event) => setForm((value) => ({ ...value, title: event.target.value }))}
+              placeholder={createMode === "series" ? "留空则按主题名自动生成" : "留空则按课节名自动生成"}
+            />
           </Field>
-          {!academic && (
+          {!academic && createMode !== "edit" && (
             <Field label="所属学校">
               <Select
                 value={form.schoolId}
-                onChange={(event) => setForm((value) => ({ ...value, schoolId: event.target.value, classId: "__new", className: "", teacherId: "" }))}
+                disabled={isViewingSession}
+                onChange={(event) => changeSchool(event.target.value)}
               >
                 {state.schools.filter((item) => item.status === "active").map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
               </Select>
             </Field>
           )}
-          <Field label="班级名称">
+          <Field label="班级">
             <Select
               value={form.classId}
+              disabled={isViewingSession}
               onChange={(event) => {
                 const classId = event.target.value;
                 const classGroup = state.classes.find((item) => item.id === classId);
                 setForm((value) => ({ ...value, classId, schoolId: classGroup?.schoolId ?? value.schoolId, teacherId: classGroup?.teacherId ?? value.teacherId }));
               }}
             >
-              <option value="__new">＋ 新建班级</option>
-              {state.classes.filter((item) => item.status === "active" && item.schoolId === form.schoolId).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              {availableClasses.length === 0 && <option value="">该校暂无可用班级</option>}
+              {availableClasses.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </Select>
-            {form.classId === "__new" && (
-              <TextInput className="schedule-new-class-input" value={form.className} onChange={(event) => setForm((value) => ({ ...value, className: event.target.value }))} placeholder="输入新班级名称" />
-            )}
+            <small>
+              {isViewingSession
+                ? "历史课次展示当时的班级与名单，不可更改。"
+                : createMode === "edit"
+                ? "更换班级会按新班成员重建本次课名单；原班级成员不会自动迁移。"
+                : "建课时会从班级成员生成本次课名单，之后可在「名单」中同步。"}
+            </small>
           </Field>
           {createMode === "series" ? (
             <>
-              <Field label="系列主题">
+              <Field label="课程">
                 <Select value={form.folderId} onChange={(event) => chooseTheme(event.target.value)}>
                   {themeFolders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
                 </Select>
               </Field>
               <div className="field field-span-2">
-                <span className="field-label">系列课节（已选 {form.lessonIds.length} 个，按目录顺序开课）</span>
+                <span className="field-label">系列课节（已选 {form.lessonIds.length} 个，按课程顺序开课）</span>
                 <div className="assign-session-list">
                   {themeLessons.map((lesson) => {
                     const checked = form.lessonIds.includes(lesson.id);
@@ -586,32 +1154,60 @@ export function OperatorScheduling({
                   })}
                   {themeLessons.length === 0 && <p className="muted-copy">这个主题下还没有课节，请先到课程目录创建。</p>}
                 </div>
-                <small>系列班由同一主题下的多个课节组成，每个课节生成一个课次；至少选择两个课节。</small>
+                <small>系列课程由同一主题下的多个课节组成，每个课节生成一个课次；至少选择两个课节。</small>
               </div>
             </>
           ) : (
-            <Field label="关联课节">
-              <Select value={form.lessonId} onChange={(event) => setForm((value) => ({ ...value, lessonId: event.target.value }))}>
+            <Field label="课节">
+              <Select
+                value={form.lessonId}
+                disabled={isViewingSession}
+                onChange={(event) => setForm((value) => ({ ...value, lessonId: event.target.value }))}
+              >
                 {state.lessons.map((lesson) => <option key={lesson.id} value={lesson.id}>{lesson.title}</option>)}
               </Select>
             </Field>
           )}
           <Field label={t("operator.teacherAssignment")}>
-            <Select value={form.teacherId} onChange={(event) => setForm((value) => ({ ...value, teacherId: event.target.value }))}>
-              {state.users.filter((item) => item.role === "teacher").filter((teacher) => state.schoolMemberships.some((membership) => membership.schoolId === form.schoolId && membership.userId === teacher.id && membership.role === "teacher" && membership.status === "active")).map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name}</option>)}
+            <Select
+              value={form.teacherId}
+              disabled={isViewingSession}
+              onChange={(event) => setForm((value) => ({ ...value, teacherId: event.target.value }))}
+            >
+              {availableTeachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name}</option>)}
             </Select>
           </Field>
           <Field label={createMode === "series" ? "首节课时间（用于自动预排）" : "开始时间"}>
-            <TextInput type="datetime-local" value={form.startAt} onChange={(event) => changeStartAt(event.target.value)} />
+            <TextInput
+              type="datetime-local"
+              value={form.startAt}
+              readOnly={isViewingSession}
+              onChange={(event) => changeStartAt(event.target.value)}
+            />
           </Field>
           <Field label="单次时长（分钟）">
-            <TextInput type="number" value={form.durationMinutes} onChange={(event) => setForm((value) => ({ ...value, durationMinutes: Number(event.target.value) }))} />
+            <TextInput
+              type="number"
+              value={form.durationMinutes}
+              readOnly={isViewingSession}
+              onChange={(event) => setForm((value) => ({ ...value, durationMinutes: Number(event.target.value) }))}
+            />
           </Field>
           <Field label={t("common.capacity")}>
-            <TextInput type="number" value={form.capacity} onChange={(event) => setForm((value) => ({ ...value, capacity: Number(event.target.value) }))} />
+            <TextInput
+              type="number"
+              value={form.capacity}
+              readOnly={isViewingSession}
+              onChange={(event) => setForm((value) => ({ ...value, capacity: Number(event.target.value) }))}
+            />
           </Field>
-          <Field label="教室名称">
-            <TextInput value={form.roomLabel} onChange={(event) => setForm((value) => ({ ...value, roomLabel: event.target.value }))} />
+          <Field label="教室（选填）">
+            <TextInput
+              value={form.roomLabel}
+              readOnly={isViewingSession}
+              onChange={(event) => setForm((value) => ({ ...value, roomLabel: event.target.value }))}
+              placeholder="选填，例如：大班教室 A"
+            />
           </Field>
           {createMode === "series" && (
             <>
@@ -651,14 +1247,59 @@ export function OperatorScheduling({
             </>
           )}
         </div>
-        <div className="schedule-preview-note">
-          <WandSparkles size={20} />
-          <div>
-            <strong>自动配置预约窗口</strong>
-            <span>开课前 30 分钟关闭预约，开课前 2 小时关闭学生自主取消。</span>
+        {!isViewingSession && (
+          <div className="schedule-preview-note">
+            <WandSparkles size={20} />
+            <div>
+              <strong>自动配置预约窗口</strong>
+              <span>开课前 30 分钟关闭预约，开课前 2 小时关闭学生自主取消。</span>
+            </div>
           </div>
-        </div>
+        )}
       </Modal>
+
+      <Modal
+        open={Boolean(cancellingSession)}
+        title="取消课次"
+        onClose={() => setCancelSessionId(null)}
+        footer={
+          <div className="modal-footer-split">
+            <small>取消原因仅用于内部记录，不会展示给学生。</small>
+            <div>
+              <Button variant="ghost" onClick={() => setCancelSessionId(null)}>再想想</Button>
+              <Button variant="danger" onClick={confirmSessionCancel}>
+                确定取消
+              </Button>
+            </div>
+          </div>
+        }
+      >
+        {cancellingSession && (
+          <div className="editor-grid">
+            <div className="field field-span-2">
+              <strong>确定取消「{cancellingSession.title}」吗？</strong>
+              <small>{cancellingSession.className} · 已产生的课堂记录会保留。</small>
+            </div>
+            <Field label="取消原因（选填）" className="field-span-2">
+              <textarea
+                className="input textarea"
+                value={cancelReason}
+                onChange={(event) => setCancelReason(event.target.value)}
+                placeholder="例如：教师临时调整（仅内部记录）"
+              />
+            </Field>
+          </div>
+        )}
+      </Modal>
+
+      {rosterSessionId && (
+        <OperatorSessionRosterModal
+          state={state}
+          sessionId={rosterSessionId}
+          actorId={user.id}
+          onClose={() => setRosterSessionId(null)}
+        />
+      )}
     </>
   );
 }

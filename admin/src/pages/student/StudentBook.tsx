@@ -171,10 +171,10 @@ export function StudentBook() {
               ))}
             </div>
             <div className="inline-filters">
-              <Field label="课程目录">
+              <Field label="课程">
                 <Select value={folderId} onChange={(event) => setFolderId(event.target.value)}>
-                  <option value="all">全部目录</option>
-                  {state.folders.filter((folder) => folder.parentId).map((folder) => (
+                  <option value="all">全部课程</option>
+                  {state.folders.filter((folder) => folder.status === "published").map((folder) => (
                     <option key={folder.id} value={folder.id}>{folder.name}</option>
                   ))}
                 </Select>

@@ -39,7 +39,8 @@ export function StatCard({
   detail,
   icon,
   tone = "purple",
-  progress
+  progress,
+  className = ""
 }: {
   label: string;
   value: ReactNode;
@@ -47,9 +48,10 @@ export function StatCard({
   icon?: ReactNode;
   tone?: Tone;
   progress?: number;
+  className?: string;
 }) {
   return (
-    <article className="stat-card">
+    <article className={`stat-card ${className}`}>
       <div className={`stat-icon tone-bg-${tone}`}>{icon}</div>
       <div className="stat-copy">
         <span className="stat-label">{label}</span>
@@ -109,7 +111,8 @@ export function Modal({
   width = "560px",
   fullscreen = false,
   backdropTone = "default",
-  panelClassName = ""
+  panelClassName = "",
+  placement = "center"
 }: {
   open: boolean;
   title: string;
@@ -124,11 +127,13 @@ export function Modal({
   backdropTone?: "default" | "dark";
   /** 个别弹窗需要自己控制最大高度等样式。 */
   panelClassName?: string;
+  /** 右侧抽屉适合在当前工作流上完成一个聚焦任务，不打断背后的列表。 */
+  placement?: "center" | "right";
 }) {
   if (!open) return null;
   return createPortal(
     <div
-      className={`modal-backdrop ${fullscreen ? "modal-backdrop-fullscreen" : ""} ${backdropTone === "dark" ? "modal-backdrop-dark" : ""}`}
+      className={`modal-backdrop ${fullscreen ? "modal-backdrop-fullscreen" : ""} ${backdropTone === "dark" ? "modal-backdrop-dark" : ""} ${placement === "right" ? "modal-backdrop-side" : ""}`}
       role="presentation"
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >

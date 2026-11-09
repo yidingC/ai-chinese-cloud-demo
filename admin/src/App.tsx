@@ -26,7 +26,6 @@ import { OperatorScheduling } from "./pages/operator/OperatorScheduling";
 import { OperatorSessionDetail } from "./pages/operator/OperatorSessionDetail";
 import { OperatorStudents } from "./pages/operator/OperatorStudents";
 import { OperatorStudentDetail } from "./pages/operator/OperatorStudentDetail";
-import { OperatorGovernance } from "./pages/operator/OperatorGovernance";
 import { OperatorAudit } from "./pages/operator/OperatorAudit";
 import { OperatorSchools } from "./pages/operator/OperatorSchools";
 import { AcademicDashboard } from "./pages/academic/AcademicDashboard";
@@ -44,6 +43,13 @@ function RoleGate({ role, children }: { role: Role; children: ReactNode }) {
 
 function IndexRedirect() {
   return <Navigate to="/login" replace />;
+}
+
+function NotificationsRoute() {
+  const state = usePlatformStore((store) => store.state);
+  const user = currentUser(state);
+  if (user.role === "operator") return <Navigate to="/operator" replace />;
+  return <NotificationsPage />;
 }
 
 /** 预约名单改成了课表上的弹窗，旧的课次详情链接统一跳回课表并自动弹出名单。 */
@@ -67,7 +73,7 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/" element={<IndexRedirect />} />
         <Route element={<AppShell />}>
-          <Route path="/notifications" element={<NotificationsPage />} />
+          <Route path="/notifications" element={<NotificationsRoute />} />
 
           <Route path="/student" element={<RoleGate role="student"><Outlet /></RoleGate>}>
             <Route index element={<StudentDashboard />} />
@@ -112,8 +118,8 @@ export default function App() {
             <Route path="students" element={<OperatorStudents />} />
             <Route path="students/:studentId" element={<OperatorStudentDetail />} />
             <Route path="schools" element={<OperatorSchools />} />
-            <Route path="governance" element={<OperatorGovernance />} />
-            <Route path="audit" element={<OperatorAudit />} />
+            <Route path="governance" element={<Navigate to="/operator" replace />} />
+            <Route path="audit" element={<Navigate to="/operator" replace />} />
           </Route>
         </Route>
         <Route path="*" element={<Navigate to="/login" replace />} />

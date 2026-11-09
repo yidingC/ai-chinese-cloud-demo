@@ -1,137 +1,122 @@
 import { useNavigate } from "react-router-dom";
-import { platform } from "../../lib/platform";
-import { useTranslation } from "react-i18next";
-import { AlertCircle, ArrowRight, CalendarPlus, CircleDollarSign, Layers3, TrendingUp, UserRoundCheck, UsersRound } from "lucide-react";
+import {
+  ArrowRight,
+  CalendarCheck2,
+  CalendarPlus,
+  ChevronRight,
+} from "lucide-react";
+import { Badge, Button, Card, PageHeader } from "../../components/ui";
+import { getBookedCount } from "../../lib/domain";
+import { formatDate, formatTime } from "../../lib/format";
 import { usePlatformStore } from "../../store/usePlatformStore";
-import { currentUser, fillRate, getBookedCount, getLesson, getWaitlist, operatorMetrics } from "../../lib/domain";
-import { formatDateTime } from "../../lib/format";
-import { Badge, Button, Card, PageHeader, ProgressBar, StatCard } from "../../components/ui";
 
 export function OperatorDashboard() {
-  const { t } = useTranslation();
   const navigate = useNavigate();
-  const { state, run } = usePlatformStore();
-  const user = currentUser(state);
-  const metrics = operatorMetrics(state);
-  const pendingReviews = state.bookings.filter((booking) => booking.status === "pending_review");
-  const urgentSessions = metrics.published
-    .filter((session) => getWaitlist(state, session.id).length > 0 || fillRate(state, session) >= 90)
-    .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
-    .slice(0, 4);
+  const { state } = usePlatformStore();
+  const now = Date.now();
+  const activeClasses = state.classes.filter((classItem) => classItem.status === "active");
+  const upcomingSessions = state.sessions
+    .filter((session) => session.status === "published" && new Date(session.endAt).getTime() >= now)
+    .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+  const todayKey = new Date(now).toLocaleDateString("en-CA", { timeZone: state.ui.timeZone });
+  const todaySessions = state.sessions
+    .filter((session) => session.status !== "cancelled" && new Date(session.startAt).toLocaleDateString("en-CA", { timeZone: state.ui.timeZone }) === todayKey)
+    .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+  const weekSessions = upcomingSessions.filter((session) => new Date(session.startAt).getTime() <= now + 7 * 24 * 60 * 60 * 1000);
 
   return (
     <>
       <PageHeader
-        eyebrow={`Operations · ${user.name}`}
-        title={t("operator.hello")}
-        description={t("operator.subtitle")}
-        actions={
-          <Button onClick={() => navigate("/operator/scheduling")}>
-            <CalendarPlus size={17} /> {t("operator.newSession")}
-          </Button>
-        }
+        title="运营工作台"
+        description={`在运营 ${activeClasses.length} 个班 · 未来 7 天 ${weekSessions.length} 节课`}
       />
 
-      <section className="operator-hero">
-        <div>
-          <Badge tone="blue">教学管理态势总览</Badge>
-          <h2>今天的课程供给和预约都在健康范围内</h2>
-          <p>{metrics.today.length} 节课程正在进行或即将开始，{metrics.waitlist.length} 位学生正在候补。</p>
-        </div>
-        <div className="operator-hero-visual">
-          <span className="orb orb-a" />
-          <span className="orb orb-b" />
-          <strong>{Math.round(metrics.fillRate)}%</strong>
-          <small>整体满班率</small>
-        </div>
-      </section>
-
-      <section className="stat-grid stat-grid-4">
-        <StatCard label={t("operator.fillRate")} value={`${Math.round(metrics.fillRate)}%`} detail={`${metrics.booked}/${metrics.capacity} 个座位`} icon={<TrendingUp size={20} />} tone="purple" progress={metrics.fillRate} />
-        <StatCard label={t("operator.activeWaitlist")} value={metrics.waitlist.length} detail="等待自动补位" icon={<UsersRound size={20} />} tone="blue" />
-        <StatCard label={t("operator.todayClasses")} value={metrics.today.length} detail="今天进行的班次" icon={<Layers3 size={20} />} tone="orange" />
-        <StatCard label={t("operator.studentTotal")} value={metrics.students} detail="完整学生档案" icon={<UserRoundCheck size={20} />} tone="mint" />
-      </section>
-
-      {pendingReviews.length > 0 && (
-        <Card className="operator-subsection">
-          <div className="card-heading">
-            <div><span className="eyebrow">Booking review</span><h2>全校待审核报名</h2><p>学校教务处理本校待办；这里保留平台教学管理兜底入口。</p></div>
-            <AlertCircle size={20} />
-          </div>
-          <div className="attention-list">
-            {pendingReviews.map((booking) => {
-              const session = state.sessions.find((item) => item.id === booking.sessionId);
-              const student = state.users.find((item) => item.id === booking.studentId);
-              const school = state.schools.find((item) => item.id === session?.schoolId);
-              if (!session) return null;
-              return (
-                <div className="academic-review-row" key={booking.id}>
-                  <span><strong>{student?.name} · {session.title}</strong><small>{school?.name} · {session.className}</small></span>
-                  <span className="teacher-request-actions">
-                    <Button size="sm" variant="ghost" onClick={() => {
-                      const reason = window.prompt("请输入驳回原因");
-                      if (reason) run(() => platform.reviewBooking({ bookingId: booking.id, decision: "reject", reason, actorId: user.id }), "报名已驳回");
-                    }}>驳回</Button>
-                    <Button size="sm" onClick={() => run(() => platform.reviewBooking({ bookingId: booking.id, decision: "approve", reason: "平台教学管理审核通过", actorId: user.id }), "报名已通过")}>通过</Button>
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </Card>
-      )}
-
-      <div className="dashboard-columns">
-        <Card>
-          <div className="card-heading">
-            <div>
-              <span className="eyebrow">Attention</span>
-              <h2>{t("operator.dataTrend")}</h2>
+      <div className="operator-workbench">
+        <div className="operator-main-stack">
+          <Card className="operator-upcoming-card">
+            <div className="operator-section-head">
+              <div>
+                <span className="eyebrow">UPCOMING CLASSES</span>
+                <h2>接下来开课</h2>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => navigate("/operator/scheduling")}>查看全部 <ArrowRight size={15} /></Button>
             </div>
-            <AlertCircle size={20} />
-          </div>
-          <div className="attention-list">
-            {urgentSessions.map((session) => {
-              const lesson = getLesson(state, session.lessonId);
-              const waitlist = getWaitlist(state, session.id).length;
-              return (
+            <div className="operator-upcoming-list">
+              {upcomingSessions.slice(0, 5).map((session) => (
                 <button key={session.id} onClick={() => navigate(`/operator/sessions/${session.id}`)}>
-                  <span className={`attention-dot ${waitlist > 0 ? "warning" : "success"}`} />
-                  <span>
-                    <strong>{session.title}</strong>
-                    <small>{session.className} · {formatDateTime(session.startAt, state.ui.timeZone, state.ui.language)}</small>
+                  <span className="operator-upcoming-time">
+                    <strong>{formatDate(session.startAt, state.ui.timeZone, state.ui.language)}</strong>
+                    <small>{formatTime(session.startAt, state.ui.timeZone, state.ui.language)}</small>
                   </span>
-                  <span className="attention-value">
-                    <strong>{waitlist > 0 ? `${waitlist} 候补` : `${Math.round(fillRate(state, session))}% 满`}</strong>
-                    <ArrowRight size={15} />
+                  <span className="operator-upcoming-copy">
+                    <strong>{session.title}</strong>
+                    <small>{session.className} · {state.users.find((person) => person.id === session.teacherId)?.name ?? "未分配教师"}</small>
+                  </span>
+                  <span className="operator-upcoming-side">
+                    <Badge tone="neutral">{getBookedCount(state, session.id)}/{session.capacity}</Badge>
+                    <ChevronRight size={15} />
                   </span>
                 </button>
-              );
-            })}
-          </div>
-        </Card>
-
-        <Card>
-          <div className="card-heading">
-            <div>
-              <span className="eyebrow">Capacity</span>
-              <h2>课程容量健康度</h2>
-            </div>
-            <CircleDollarSign size={20} />
-          </div>
-          <div className="capacity-health-list">
-            {metrics.published.slice(0, 5).map((session) => {
-              const rate = fillRate(state, session);
-              return (
-                <div key={session.id}>
-                  <div><strong>{session.title}</strong><span>{getBookedCount(state, session.id)}/{session.capacity}</span></div>
-                  <ProgressBar value={rate} tone={rate >= 90 ? "orange" : rate >= 60 ? "mint" : "purple"} />
+              ))}
+              {upcomingSessions.length === 0 && (
+                <div className="operator-empty-inline">
+                  <CalendarCheck2 size={20} />
+                  <div><strong>暂无未来课次</strong><small>排课后，最近的课堂会显示在这里。</small></div>
                 </div>
-              );
-            })}
-          </div>
-        </Card>
+              )}
+            </div>
+          </Card>
+        </div>
+
+        <div className="operator-side-stack">
+          <Card className="operator-today-card">
+            <div className="operator-section-head">
+              <div>
+                <span className="eyebrow">TODAY</span>
+                <h2>今天课堂</h2>
+                <p>{formatDate(new Date(now).toISOString(), state.ui.timeZone, state.ui.language)}</p>
+              </div>
+              <Badge tone="blue">{todaySessions.length} 节</Badge>
+            </div>
+            <div className="operator-today-list">
+              {todaySessions.map((session) => {
+                const live = new Date(session.startAt).getTime() <= now && new Date(session.endAt).getTime() >= now;
+                const ended = new Date(session.endAt).getTime() < now;
+                return (
+                  <button key={session.id} className={live ? "is-live" : ended ? "is-ended" : ""} onClick={() => navigate(`/operator/sessions/${session.id}`)}>
+                    <span className="operator-today-time">{formatTime(session.startAt, state.ui.timeZone, state.ui.language)}</span>
+                    <span className="operator-today-copy">
+                      <strong>{session.title}</strong>
+                      <small>{session.className} · {state.users.find((person) => person.id === session.teacherId)?.name ?? "未分配教师"}</small>
+                    </span>
+                    <Badge tone={live ? "orange" : ended ? "neutral" : "blue"}>{live ? "进行中" : ended ? "已结束" : "待开始"}</Badge>
+                  </button>
+                );
+              })}
+              {todaySessions.length === 0 && (
+                <div className="operator-empty-inline compact">
+                  <CalendarCheck2 size={18} />
+                  <div><strong>今天没有课堂</strong><small>可以继续处理后续排课。</small></div>
+                </div>
+              )}
+            </div>
+          </Card>
+
+          <button
+            type="button"
+            className="operator-schedule-cta"
+            aria-label="去排课"
+            onClick={() => navigate("/operator/scheduling?create=1")}
+          >
+            <span className="operator-schedule-cta-icon" aria-hidden="true">
+              <CalendarPlus size={26} />
+            </span>
+            <span className="operator-schedule-cta-foot">
+              <ArrowRight />
+              去排课
+            </span>
+          </button>
+        </div>
       </div>
     </>
   );

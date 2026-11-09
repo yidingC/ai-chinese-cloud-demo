@@ -6,8 +6,8 @@ import { platform } from "../../lib/platform";
 import { usePlatformStore } from "../../store/usePlatformStore";
 import { currentUser, getBookedCount, getLesson, getSession, getStudent, getWaitlist, getUser } from "../../lib/domain";
 import { getAcademicSchoolId, workspaceState } from "../../lib/academicScope";
-import { formatDate, formatRange, inputDateTime } from "../../lib/format";
-import { Avatar, Badge, Button, Card, EmptyState, Field, Modal, PageHeader, ProgressBar, Select, SourceBadge, TextInput } from "../../components/ui";
+import { formatDate, formatRange } from "../../lib/format";
+import { Avatar, Badge, Button, Card, EmptyState, Field, Modal, PageHeader, ProgressBar, Select, SourceBadge } from "../../components/ui";
 
 export function OperatorSessionDetail({
   academic = false,
@@ -26,16 +26,8 @@ export function OperatorSessionDetail({
   const lesson = session ? getLesson(state, session.lessonId) : undefined;
   const [proxyOpen, setProxyOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
-  const [editOpen, setEditOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [proxyForm, setProxyForm] = useState({ studentId: "", force: false, reason: "" });
-  const [editForm, setEditForm] = useState(() => ({
-    classId: session?.classId ?? "",
-    capacity: session?.capacity ?? 30,
-    teacherId: session?.teacherId ?? "",
-    startAt: inputDateTime(session?.startAt ?? new Date()),
-    durationMinutes: session ? Math.round((new Date(session.endAt).getTime() - new Date(session.startAt).getTime()) / 60_000) : 40
-  }));
 
   if (!session || !lesson) return <EmptyState title="班次不存在" action={<Button onClick={() => navigate(`${basePath}/scheduling`)}>返回排课</Button>} />;
 
@@ -63,30 +55,6 @@ export function OperatorSessionDetail({
     }
   }
 
-  function saveEdit() {
-    const start = new Date(editForm.startAt);
-    const end = new Date(start.getTime() + Number(editForm.durationMinutes) * 60_000);
-    const result = run(
-      () =>
-        platform.updateSession({
-          sessionId: session!.id,
-          patch: {
-            classId: editForm.classId,
-            capacity: Number(editForm.capacity),
-            teacherId: editForm.teacherId,
-            startAt: start.toISOString(),
-            endAt: end.toISOString(),
-            bookingCloseAt: new Date(start.getTime() - 30 * 60_000).toISOString(),
-            cancelCloseAt: new Date(start.getTime() - 2 * 60 * 60_000).toISOString()
-          },
-          actorId: user.id,
-          reason: academic ? "学校教务调整本校班次" : "教学管理调整班次"
-        }),
-      "班次信息已更新"
-    );
-    if (result.ok) setEditOpen(false);
-  }
-
   return (
     <>
       <PageHeader
@@ -96,7 +64,7 @@ export function OperatorSessionDetail({
         actions={
           <>
             <Button variant="ghost" onClick={() => navigate(`${basePath}/scheduling`)}><ArrowLeft size={16} /> 返回排课</Button>
-            <Button variant="secondary" onClick={() => setEditOpen(true)}><Pencil size={16} /> 编辑班次</Button>
+            <Button variant="secondary" onClick={() => navigate(`${basePath}/scheduling?edit=${session.id}`)}><Pencil size={16} /> 编辑课次</Button>
             <Button variant="danger" onClick={() => setCancelOpen(true)}><XCircle size={16} /> 取消课堂</Button>
           </>
         }
@@ -243,34 +211,6 @@ export function OperatorSessionDetail({
         </Field>
       </Modal>
 
-      <Modal
-        open={editOpen}
-        title="编辑班次"
-        onClose={() => setEditOpen(false)}
-        footer={<div className="modal-footer-split"><small>已有学生会收到课程变更通知</small><div><Button variant="ghost" onClick={() => setEditOpen(false)}>取消</Button><Button onClick={saveEdit}>保存修改</Button></div></div>}
-      >
-        <div className="editor-grid">
-          <Field label="班级名称" className="field-span-2">
-            <Select value={editForm.classId} onChange={(event) => setEditForm((value) => ({ ...value, classId: event.target.value }))}>
-              {state.classes.filter((item) => item.status === "active").map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </Select>
-          </Field>
-          <Field label="开始时间" className="field-span-2">
-            <TextInput type="datetime-local" value={editForm.startAt} onChange={(event) => setEditForm((value) => ({ ...value, startAt: event.target.value }))} />
-          </Field>
-          <Field label="时长（分钟）">
-            <TextInput type="number" value={editForm.durationMinutes} onChange={(event) => setEditForm((value) => ({ ...value, durationMinutes: Number(event.target.value) }))} />
-          </Field>
-          <Field label={t("common.capacity")}>
-            <TextInput type="number" value={editForm.capacity} onChange={(event) => setEditForm((value) => ({ ...value, capacity: Number(event.target.value) }))} />
-          </Field>
-          <Field label={t("operator.teacherAssignment")} className="field-span-2">
-            <Select value={editForm.teacherId} onChange={(event) => setEditForm((value) => ({ ...value, teacherId: event.target.value }))}>
-              {state.users.filter((item) => item.role === "teacher").map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name}</option>)}
-            </Select>
-          </Field>
-        </div>
-      </Modal>
     </>
   );
 }

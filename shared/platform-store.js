@@ -68,6 +68,7 @@
       "students",
       "classes",
       "classEnrollments",
+      "subjects",
       "folders",
       "lessons",
       "series",
@@ -91,11 +92,68 @@
       if (!Array.isArray(merged[key])) merged[key] = seeded[key];
     });
 
+    /* 课程体系从“自由目录 + 课节”升级为“科目 → 课程 → 课节”。
+       旧快照里的 folder-root 只作为分类容器存在，迁移时提升为科目；
+       其余目录全部保留为课程，课节上的 folderId 因此无需改写。 */
+    const seededSubject = (seeded.subjects || [])[0] || {
+      id: "subject-chinese",
+      name: "中文",
+      description: "",
+      color: "#6552ff",
+      order: 1
+    };
+    if (!Array.isArray(merged.subjects) || merged.subjects.length === 0) {
+      merged.subjects = [clone(seededSubject)];
+    }
+    const defaultSubject = merged.subjects[0];
+    const legacyRoot = merged.folders.find((folder) => folder.id === "folder-root");
+    if (legacyRoot && !(Array.isArray(input?.subjects) && input.subjects.length > 0)) {
+      const legacyName = String(legacyRoot.name || "").replace(/课程库$/u, "").trim();
+      if (legacyName) defaultSubject.name = legacyName;
+      if (!defaultSubject.description && legacyRoot.description) defaultSubject.description = legacyRoot.description;
+      const rootLessons = merged.lessons.filter((lesson) => lesson.folderId === legacyRoot.id);
+      if (rootLessons.length === 0) {
+        merged.folders = merged.folders.filter((folder) => folder.id !== legacyRoot.id);
+      } else {
+        legacyRoot.subjectId = defaultSubject.id;
+        legacyRoot.name = legacyRoot.name === "中文课程库" ? "未分类课程" : legacyRoot.name;
+      }
+    }
+    const subjectIds = new Set(merged.subjects.map((subject) => subject.id));
+    merged.folders.forEach((course, index) => {
+      course.subjectId = subjectIds.has(course.subjectId) ? course.subjectId : defaultSubject.id;
+      course.status = ["draft", "published", "disabled"].includes(course.status) ? course.status : "published";
+      course.tags = Array.isArray(course.tags) ? course.tags.filter(Boolean) : [];
+      course.order = Number(course.order) || index + 1;
+      delete course.parentId;
+    });
+    const lessonSequence = new Map();
+    merged.lessons.forEach((lesson) => {
+      const nextOrder = (lessonSequence.get(lesson.folderId) || 0) + 1;
+      lesson.order = Number(lesson.order) || nextOrder;
+      lessonSequence.set(lesson.folderId, Math.max(nextOrder, lesson.order));
+    });
+
+    const seededSchoolById = new Map((seeded.schools || []).map((school) => [school.id, school]));
+    merged.schools.forEach((school) => {
+      school.timeZone = school.timeZone || seededSchoolById.get(school.id)?.timeZone || "Asia/Jakarta";
+    });
+
     // 班级名称是新增字段：老快照按课次 id 从种子补齐，找不到的旧课次显示“待分配班级”。
     const seededSessionById = new Map((seeded.sessions || []).map((session) => [session.id, session]));
     merged.sessions.forEach((session) => {
       if (!session.className) {
         session.className = seededSessionById.get(session.id)?.className || "待分配班级";
+      }
+      // 课次名单是后加的快照字段：老快照按当前班级有效成员补齐，后续不再随班级自动变化。
+      if (!Array.isArray(session.roster)) {
+        session.roster = merged.classEnrollments
+          .filter((item) => item.classId === session.classId && item.status === "active")
+          .map((item) => ({
+            studentId: item.studentId,
+            source: "snapshot",
+            addedAt: item.joinedAt || merged.generatedAt || nowIso()
+          }));
       }
     });
 
@@ -115,6 +173,11 @@
     merged.classEnrollments = merged.classEnrollments.filter((item) => !isRetiredStudent(item.studentId));
     merged.bookings = merged.bookings.filter((item) => !isRetiredStudent(item.studentId));
     merged.waitlist = merged.waitlist.filter((item) => !isRetiredStudent(item.studentId));
+    merged.sessions.forEach((session) => {
+      if (Array.isArray(session.roster)) {
+        session.roster = session.roster.filter((entry) => !isRetiredStudent(entry.studentId));
+      }
+    });
     merged.interactionAttempts = merged.interactionAttempts.filter((item) => !isRetiredStudent(item.studentId));
     merged.assessmentScores = merged.assessmentScores.filter((item) => !isRetiredStudent(item.studentId));
     merged.notifications = merged.notifications.filter((item) => !isRetiredStudent(item.userId));
@@ -917,6 +980,15 @@
       .map((item) => item.studentId);
   }
 
+  function buildSessionRoster(draft, classId, source = "snapshot") {
+    const addedAt = nowIso();
+    return activeClassStudents(draft, classId).map((studentId) => ({ studentId, source, addedAt }));
+  }
+
+  function sessionRosterFrozen(session) {
+    return new Date(session.startAt).getTime() <= Date.now();
+  }
+
   function bookedCount(draft, sessionId) {
     return draft.bookings.filter((booking) => booking.sessionId === sessionId && booking.status === "booked").length;
   }
@@ -1020,13 +1092,13 @@
     }, "current-user");
   }
 
-  function createSchool({ name, code, actorId }) {
+  function createSchool({ name, code, timeZone = "Asia/Jakarta", actorId }) {
     return save((draft) => {
       const schoolName = String(name || "").trim();
       const schoolCode = String(code || "").trim().toUpperCase();
       if (!schoolName || !schoolCode) return result(false, null, "学校名称和编码不能为空", "INVALID_SCHOOL");
       if (draft.schools.some((item) => item.code === schoolCode)) return result(false, null, "学校编码已存在", "SCHOOL_CODE_EXISTS");
-      const school = { id: makeId("school"), name: schoolName, code: schoolCode, status: "active", createdAt: nowIso() };
+      const school = { id: makeId("school"), name: schoolName, code: schoolCode, timeZone: String(timeZone || "Asia/Jakarta"), status: "active", createdAt: nowIso() };
       draft.schools.push(school);
       addAudit(draft, {
         actorId: actorId || draft.currentUserId,
@@ -1037,6 +1109,51 @@
       });
       return result(true, school);
     }, "school");
+  }
+
+  function createSchoolStaff({ schoolId, role, name, phone = "", note = "", timeZone, actorId }) {
+    return save((draft) => {
+      const school = draft.schools.find((item) => item.id === schoolId);
+      if (!school) return result(false, null, "学校不存在", "NOT_FOUND");
+      if (school.status !== "active") return result(false, null, "归档学校不能新增教职工", "SCHOOL_ARCHIVED");
+      if (!["academic", "teacher"].includes(role)) return result(false, null, "教职工角色不正确", "INVALID_ROLE");
+      const displayName = String(name || "").trim();
+      const normalizedPhone = String(phone || "").trim();
+      if (!displayName || !normalizedPhone) return result(false, null, "姓名和手机号不能为空", "INVALID_STAFF");
+      if (draft.users.some((user) => String(user.phone || "").replace(/\s+/g, "") === normalizedPhone.replace(/\s+/g, ""))) {
+        return result(false, null, "该手机号已存在账号", "PHONE_EXISTS");
+      }
+      const user = {
+        id: makeId(role),
+        role,
+        name: displayName,
+        phone: normalizedPhone,
+        avatar: displayName.slice(0, 2),
+        timeZone: String(timeZone || school.timeZone || "Asia/Jakarta"),
+        locale: "id-ID",
+        status: "active",
+        bio: String(note || "").trim(),
+        title: role === "academic" ? `${school.name}教务` : undefined
+      };
+      const membership = {
+        id: makeId("school-membership"),
+        schoolId,
+        userId: user.id,
+        role,
+        status: "active",
+        joinedAt: nowIso()
+      };
+      draft.users.push(user);
+      draft.schoolMemberships.push(membership);
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: "create_school_staff",
+        targetType: "school",
+        targetId: schoolId,
+        summary: `为“${school.name}”新增${role === "academic" ? "教务" : "教师"}“${user.name}”`
+      });
+      return result(true, { user, membership });
+    }, "school-staff");
   }
 
   function updateSchool({ schoolId, patch, actorId }) {
@@ -1062,6 +1179,32 @@
     }, "school");
   }
 
+  function deleteSchool({ schoolId, actorId }) {
+    return save((draft) => {
+      const schoolIndex = draft.schools.findIndex((item) => item.id === schoolId);
+      const school = draft.schools[schoolIndex];
+      if (!school) return result(false, null, "学校不存在", "NOT_FOUND");
+      const hasMemberships = draft.schoolMemberships.some((item) => item.schoolId === schoolId);
+      const hasClasses = draft.classes.some((item) => item.schoolId === schoolId);
+      const hasSessions = draft.sessions.some((item) => item.schoolId === schoolId);
+      const hasSeries = draft.series.some((item) => item.schoolId === schoolId);
+      const hasAssessments = draft.assessments.some((item) => item.schoolId === schoolId);
+      const hasGradePolicies = draft.gradePolicies.some((item) => item.schoolId === schoolId);
+      if (hasMemberships || hasClasses || hasSessions || hasSeries || hasAssessments || hasGradePolicies) {
+        return result(false, null, "学校已有成员、班级、课次或历史记录，只能停用", "SCHOOL_IN_USE");
+      }
+      draft.schools.splice(schoolIndex, 1);
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: "delete_school",
+        targetType: "school",
+        targetId: school.id,
+        summary: `删除空学校“${school.name}”`
+      });
+      return result(true, school);
+    }, "school");
+  }
+
   function saveSchoolMembership({ schoolId, userId, role, status = "active", actorId }) {
     return save((draft) => {
       const school = draft.schools.find((item) => item.id === schoolId);
@@ -1070,6 +1213,14 @@
       if (!user) return result(false, null, "用户不存在", "USER_NOT_FOUND");
       if (!["student", "teacher", "academic"].includes(role)) return result(false, null, "成员角色不正确", "INVALID_ROLE");
       if (user.role !== role) return result(false, null, "成员角色与账号角色不一致", "INVALID_ROLE");
+      if (role === "teacher" && status === "left") {
+        const linkedClassCount = draft.classes.filter(
+          (item) => item.schoolId === schoolId && item.teacherId === userId && item.status === "active"
+        ).length;
+        if (linkedClassCount > 0) {
+          return result(false, null, `该教师仍关联 ${linkedClassCount} 个进行中班级，请先解除班级关联`, "TEACHER_HAS_CLASSES");
+        }
+      }
       let membership = draft.schoolMemberships.find(
         (item) => item.schoolId === schoolId && item.userId === userId && item.role === role
       );
@@ -1427,6 +1578,11 @@
     return save((draft) => {
       const actor = getUser(draft, payload.actorId || draft.currentUserId);
       const requestedSchoolId = payload.schoolId || (actor?.role === "academic" ? activeAcademicSchoolId(draft, actor.id) : "");
+      const lesson = draft.lessons.find((item) => item.id === payload.lessonId);
+      if (!lesson) return result(false, null, "课节不存在", "NOT_FOUND");
+      if (lesson.status !== "published") return result(false, null, "仅可选择已发布课节", "LESSON_UNAVAILABLE");
+      const course = draft.folders.find((item) => item.id === lesson.folderId);
+      if (!course || course.status !== "published") return result(false, null, "所属课程尚未发布", "COURSE_UNAVAILABLE");
       let classGroup = payload.classId
         ? draft.classes.find((item) => item.id === payload.classId)
         : draft.classes.find((item) => item.name === (payload.className || "待分配班级") && (!requestedSchoolId || item.schoolId === requestedSchoolId));
@@ -1459,6 +1615,7 @@
         startAt: new Date(payload.startAt).toISOString(),
         endAt: new Date(payload.endAt).toISOString()
       };
+      session.roster = buildSessionRoster(draft, classGroup.id);
       if (teacherHasConflict(draft, session.teacherId, session)) {
         return result(false, null, "教师在该时间段已有其他课程", "TEACHER_CONFLICT");
       }
@@ -1477,7 +1634,7 @@
 
   function createSeries(payload) {
     return save((draft) => {
-      /* 系列班 = 同一主题目录下按顺序排列的多个课节。
+      /* 系列班 = 同一课程下按顺序排列的多个课节。
          每个课节生成一个课次，课次之间默认间隔 N 周。 */
       const rawLessonIds = Array.isArray(payload.lessonIds) && payload.lessonIds.length
         ? payload.lessonIds
@@ -1494,7 +1651,14 @@
       }
       const folderId = lessons[0].folderId;
       if (lessons.some((lesson) => lesson.folderId !== folderId)) {
-        return result(false, null, "系列班的课节必须来自同一主题目录", "LESSON_THEME_MISMATCH");
+        return result(false, null, "系列班的课节必须来自同一课程", "LESSON_THEME_MISMATCH");
+      }
+      const course = draft.folders.find((item) => item.id === folderId);
+      if (!course || course.status !== "published") {
+        return result(false, null, "仅可选择已发布课程", "COURSE_UNAVAILABLE");
+      }
+      if (lessons.some((lesson) => lesson.status !== "published")) {
+        return result(false, null, "系列班只能选择已发布课节", "LESSON_UNAVAILABLE");
       }
       if (payload.folderId && payload.folderId !== folderId) {
         return result(false, null, "系列主题与所选课节不一致", "LESSON_THEME_MISMATCH");
@@ -1574,6 +1738,7 @@
       plannedSessions.forEach((session) => {
         session.classId = classGroup.id;
         session.className = classGroup.name;
+        session.roster = buildSessionRoster(draft, classGroup.id);
         draft.sessions.push(session);
         sessionIds.push(session.id);
       });
@@ -1630,8 +1795,12 @@
       if (teacherHasConflict(draft, candidate.teacherId, candidate, sessionId)) {
         return result(false, null, "修改后教师时间冲突", "TEACHER_CONFLICT");
       }
+      const previousClassId = session.classId;
       Object.assign(session, patch, patch.classId || patch.className ? { classId: candidate.classId, className: candidate.className } : {});
       session.schoolId = candidate.schoolId;
+      if (session.classId !== previousClassId) {
+        session.roster = buildSessionRoster(draft, session.classId);
+      }
       if (patch.startAt) session.startAt = new Date(patch.startAt).toISOString();
       if (patch.endAt) session.endAt = new Date(patch.endAt).toISOString();
       if (patch.bookingCloseAt) session.bookingCloseAt = new Date(patch.bookingCloseAt).toISOString();
@@ -1656,6 +1825,88 @@
       });
       return result(true, session);
     }, "session");
+  }
+
+  /** 同步只处理自动来源：补入新班级成员、移出已离开班级者，人工补录的学生保留。 */
+  function syncSessionRoster({ sessionId, actorId }) {
+    return save((draft) => {
+      const session = getSession(draft, sessionId);
+      if (!session) return result(false, null, "课次不存在", "NOT_FOUND");
+      if (sessionRosterFrozen(session)) {
+        return result(false, null, "课堂已开始，课次名单已冻结", "ROSTER_FROZEN");
+      }
+      const entries = Array.isArray(session.roster) ? session.roster : [];
+      const activeIds = activeClassStudents(draft, session.classId);
+      const activeSet = new Set(activeIds);
+      const existingIds = new Set(entries.map((entry) => entry.studentId));
+      const kept = entries.filter(
+        (entry) => entry.source === "manual" || activeSet.has(entry.studentId)
+      );
+      const added = activeIds
+        .filter((studentId) => !existingIds.has(studentId))
+        .map((studentId) => ({ studentId, source: "sync", addedAt: nowIso() }));
+      session.roster = [...kept, ...added];
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: "sync_session_roster",
+        targetType: "session",
+        targetId: session.id,
+        summary: `同步“${session.title}”的课次名单（新增 ${added.length} 人）`
+      });
+      return result(true, session.roster);
+    }, "session-roster");
+  }
+
+  function addSessionRosterStudents({ sessionId, studentIds, actorId }) {
+    return save((draft) => {
+      const session = getSession(draft, sessionId);
+      if (!session) return result(false, null, "课次不存在", "NOT_FOUND");
+      if (sessionRosterFrozen(session)) {
+        return result(false, null, "课堂已开始，课次名单已冻结", "ROSTER_FROZEN");
+      }
+      const requested = [...new Set((Array.isArray(studentIds) ? studentIds : []).filter(Boolean))];
+      if (!requested.length) return result(false, null, "请选择要补录的学生", "EMPTY_SELECTION");
+      const outsideSchool = requested.find((studentId) => !studentBelongsToSchool(draft, studentId, session.schoolId));
+      if (outsideSchool) return result(false, null, "只能补录本校学生", "OUT_OF_SCOPE");
+      const entries = Array.isArray(session.roster) ? session.roster : [];
+      const existingIds = new Set(entries.map((entry) => entry.studentId));
+      const added = requested
+        .filter((studentId) => !existingIds.has(studentId))
+        .map((studentId) => ({ studentId, source: "manual", addedAt: nowIso() }));
+      if (!added.length) return result(false, null, "所选学生已在课次名单中", "ALREADY_IN_ROSTER");
+      session.roster = [...entries, ...added];
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: "add_session_roster_students",
+        targetType: "session",
+        targetId: session.id,
+        summary: `为“${session.title}”补录 ${added.length} 名学生`
+      });
+      return result(true, session.roster);
+    }, "session-roster");
+  }
+
+  function removeSessionRosterStudent({ sessionId, studentId, actorId }) {
+    return save((draft) => {
+      const session = getSession(draft, sessionId);
+      if (!session) return result(false, null, "课次不存在", "NOT_FOUND");
+      if (sessionRosterFrozen(session)) {
+        return result(false, null, "课堂已开始，课次名单已冻结", "ROSTER_FROZEN");
+      }
+      const entries = Array.isArray(session.roster) ? session.roster : [];
+      if (!entries.some((entry) => entry.studentId === studentId)) {
+        return result(false, null, "学生不在本次课名单中", "NOT_FOUND");
+      }
+      session.roster = entries.filter((entry) => entry.studentId !== studentId);
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: "remove_session_roster_student",
+        targetType: "session",
+        targetId: session.id,
+        summary: `从“${session.title}”的课次名单移出 1 名学生`
+      });
+      return result(true, session.roster);
+    }, "session-roster");
   }
 
   /** 系列班整组课次时间更新：任一课次冲突则整组不写入，避免留下半套时间。 */
@@ -1751,25 +2002,24 @@
     }, "series");
   }
 
-  function cancelSession({ sessionId, actorId, reason }) {
-    if (!reason || !reason.trim()) return result(false, null, "取消课堂必须填写原因", "REASON_REQUIRED");
+  function cancelSession({ sessionId, actorId, reason = "" }) {
+    const cancelReason = typeof reason === "string" ? reason.trim() : "";
     return save((draft) => {
       const session = getSession(draft, sessionId);
       if (!session) return result(false, null, "班次不存在", "NOT_FOUND");
       session.status = "cancelled";
       session.cancelledAt = nowIso();
-      session.cancelReason = reason;
+      session.cancelReason = cancelReason;
       const affected = draft.bookings.filter((booking) => booking.sessionId === sessionId && booking.status === "booked");
       affected.forEach((booking) => {
         booking.status = "cancelled";
         booking.cancelledAt = nowIso();
         booking.cancelledBy = actorId;
-        booking.cancelReason = reason;
         addNotification(draft, {
           userId: booking.studentId,
           type: "session_cancelled",
           title: "课堂已取消",
-          body: `“${session.title}”已取消。原因：${reason}`,
+          body: `“${session.title}”已取消，请查看最新课表。`,
           link: "/student/schedule"
         });
       });
@@ -1779,7 +2029,7 @@
         targetType: "session",
         targetId: sessionId,
         summary: `取消“${session.title}”`,
-        reason
+        reason: cancelReason
       });
       return result(true, session);
     }, "session");
@@ -2036,47 +2286,200 @@
     }, "session");
   }
 
-  function createFolder({ parentId = "folder-root", name, description = "", color = "#6552ff", actorId }) {
+  function createSubject({ name, description = "", color = "#6552ff", actorId }) {
     return save((draft) => {
-      const parent = draft.folders.find((folder) => folder.id === parentId);
-      if (!parent) return result(false, null, "上级目录不存在", "NOT_FOUND");
-      const folder = {
-        id: makeId("folder"),
-        parentId,
-        name: name.trim(),
-        description,
+      const normalizedName = String(name || "").trim();
+      if (!normalizedName) return result(false, null, "科目名称不能为空", "INVALID_NAME");
+      if (draft.subjects.some((subject) => subject.name.trim().toLowerCase() === normalizedName.toLowerCase())) {
+        return result(false, null, "该科目已存在", "DUPLICATE_NAME");
+      }
+      const subject = {
+        id: makeId("subject"),
+        name: normalizedName,
+        description: String(description || "").trim(),
         color,
-        order: draft.folders.filter((item) => item.parentId === parentId).length + 1
+        order: Math.max(0, ...draft.subjects.map((item) => Number(item.order) || 0)) + 1
       };
-      if (!folder.name) return result(false, null, "目录名称不能为空", "INVALID_NAME");
-      draft.folders.push(folder);
+      draft.subjects.push(subject);
       addAudit(draft, {
         actorId: actorId || draft.currentUserId,
-        action: "create_folder",
-        targetType: "folder",
-        targetId: folder.id,
-        summary: `创建课程目录“${folder.name}”`
+        action: "create_subject",
+        targetType: "subject",
+        targetId: subject.id,
+        summary: `创建科目“${subject.name}”`
       });
-      return result(true, folder);
+      return result(true, subject);
+    }, "catalog");
+  }
+
+  function updateSubject({ subjectId, patch, actorId }) {
+    return save((draft) => {
+      const subject = draft.subjects.find((item) => item.id === subjectId);
+      if (!subject) return result(false, null, "科目不存在", "NOT_FOUND");
+      const nextName = patch?.name === undefined ? subject.name : String(patch.name).trim();
+      if (!nextName) return result(false, null, "科目名称不能为空", "INVALID_NAME");
+      if (draft.subjects.some((item) => item.id !== subjectId && item.name.trim().toLowerCase() === nextName.toLowerCase())) {
+        return result(false, null, "该科目已存在", "DUPLICATE_NAME");
+      }
+      if (patch?.name !== undefined) subject.name = nextName;
+      if (patch?.description !== undefined) subject.description = String(patch.description || "").trim();
+      if (patch?.color !== undefined) subject.color = patch.color;
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: "update_subject",
+        targetType: "subject",
+        targetId: subject.id,
+        summary: `更新科目“${subject.name}”`
+      });
+      return result(true, subject);
+    }, "catalog");
+  }
+
+  function deleteSubject({ subjectId, actorId }) {
+    return save((draft) => {
+      const subject = draft.subjects.find((item) => item.id === subjectId);
+      if (!subject) return result(false, null, "科目不存在", "NOT_FOUND");
+      const courseCount = draft.folders.filter((course) => course.subjectId === subjectId).length;
+      if (courseCount > 0) {
+        return result(false, null, `该科目下还有 ${courseCount} 门课程，请先移走或删除课程`, "SUBJECT_IN_USE");
+      }
+      draft.subjects = draft.subjects.filter((item) => item.id !== subjectId);
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: "delete_subject",
+        targetType: "subject",
+        targetId: subject.id,
+        summary: `删除科目“${subject.name}”`
+      });
+      return result(true, subject);
+    }, "catalog");
+  }
+
+  function createCourse({ subjectId, name, description = "", tags = [], color = "#6552ff", actorId }) {
+    return save((draft) => {
+      const subject = draft.subjects.find((item) => item.id === subjectId);
+      if (!subject) return result(false, null, "科目不存在", "NOT_FOUND");
+      const normalizedName = String(name || "").trim();
+      if (!normalizedName) return result(false, null, "课程名称不能为空", "INVALID_NAME");
+      if (draft.folders.some((course) => course.subjectId === subjectId && course.name.trim().toLowerCase() === normalizedName.toLowerCase())) {
+        return result(false, null, "该科目下已有同名课程", "DUPLICATE_NAME");
+      }
+      const course = {
+        id: makeId("course"),
+        subjectId,
+        name: normalizedName,
+        description: String(description || "").trim(),
+        tags: Array.isArray(tags) ? tags.filter(Boolean) : [],
+        color,
+        order: Math.max(0, ...draft.folders.filter((item) => item.subjectId === subjectId).map((item) => Number(item.order) || 0)) + 1,
+        status: "draft",
+        createdAt: nowIso()
+      };
+      draft.folders.push(course);
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: "create_course",
+        targetType: "course",
+        targetId: course.id,
+        summary: `在“${subject.name}”下创建课程“${course.name}”`
+      });
+      return result(true, course);
+    }, "catalog");
+  }
+
+  function updateCourse({ courseId, patch, actorId }) {
+    return save((draft) => {
+      const course = draft.folders.find((item) => item.id === courseId);
+      if (!course) return result(false, null, "课程不存在", "NOT_FOUND");
+      const nextName = patch?.name === undefined ? course.name : String(patch.name).trim();
+      if (!nextName) return result(false, null, "课程名称不能为空", "INVALID_NAME");
+      const nextSubjectId = patch?.subjectId || course.subjectId;
+      if (!draft.subjects.some((subject) => subject.id === nextSubjectId)) {
+        return result(false, null, "科目不存在", "NOT_FOUND");
+      }
+      if (draft.folders.some((item) => item.id !== courseId && item.subjectId === nextSubjectId && item.name.trim().toLowerCase() === nextName.toLowerCase())) {
+        return result(false, null, "该科目下已有同名课程", "DUPLICATE_NAME");
+      }
+      if (patch?.subjectId !== undefined) course.subjectId = nextSubjectId;
+      if (patch?.name !== undefined) course.name = nextName;
+      if (patch?.description !== undefined) course.description = String(patch.description || "").trim();
+      if (patch?.tags !== undefined) course.tags = Array.isArray(patch.tags) ? patch.tags.filter(Boolean) : [];
+      if (patch?.color !== undefined) course.color = patch.color;
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: "update_course",
+        targetType: "course",
+        targetId: course.id,
+        summary: `更新课程“${course.name}”`
+      });
+      return result(true, course);
+    }, "catalog");
+  }
+
+  function setCourseStatus({ courseId, status, actorId }) {
+    return save((draft) => {
+      const course = draft.folders.find((item) => item.id === courseId);
+      if (!course) return result(false, null, "课程不存在", "NOT_FOUND");
+      if (!["draft", "published", "disabled"].includes(status)) return result(false, null, "课程状态无效", "INVALID_STATUS");
+      if (status === "published" && !draft.lessons.some((lesson) => lesson.folderId === courseId && lesson.status === "published")) {
+        return result(false, null, "发布课程前至少需要一个已发布课节", "COURSE_EMPTY");
+      }
+      course.status = status;
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: status === "published" ? "publish_course" : status === "disabled" ? "disable_course" : "draft_course",
+        targetType: "course",
+        targetId: course.id,
+        summary: `${status === "published" ? "发布" : status === "disabled" ? "停用" : "转为草稿"}课程“${course.name}”`
+      });
+      return result(true, course);
+    }, "catalog");
+  }
+
+  function deleteCourse({ courseId, actorId }) {
+    return save((draft) => {
+      const course = draft.folders.find((item) => item.id === courseId);
+      if (!course) return result(false, null, "课程不存在", "NOT_FOUND");
+      const lessonIds = draft.lessons.filter((lesson) => lesson.folderId === courseId).map((lesson) => lesson.id);
+      const inUse = draft.series.some((series) => series.folderId === courseId)
+        || draft.sessions.some((session) => lessonIds.includes(session.lessonId))
+        || draft.interactionSets.some((set) => lessonIds.includes(set.lessonId))
+        || draft.materialRefs.some((ref) => lessonIds.includes(ref.lessonId));
+      if (inUse) {
+        return result(false, null, "课程已被班级或内容引用，只能停用，不能删除", "COURSE_IN_USE");
+      }
+      draft.lessons = draft.lessons.filter((lesson) => lesson.folderId !== courseId);
+      draft.folders = draft.folders.filter((item) => item.id !== courseId);
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: "delete_course",
+        targetType: "course",
+        targetId: course.id,
+        summary: `删除课程“${course.name}”`
+      });
+      return result(true, course);
     }, "catalog");
   }
 
   function createLesson({ folderId, title, subtitle = "", description = "", durationMinutes = 40, tags = [], color = "#6552ff", coverEmoji = "📘", actorId }) {
     return save((draft) => {
       const folder = draft.folders.find((item) => item.id === folderId);
-      if (!folder) return result(false, null, "课程目录不存在", "NOT_FOUND");
-      if (!title.trim()) return result(false, null, "课节标题不能为空", "INVALID_NAME");
+      if (!folder) return result(false, null, "课程不存在", "NOT_FOUND");
+      const normalizedTitle = String(title || "").trim();
+      if (!normalizedTitle) return result(false, null, "课节标题不能为空", "INVALID_NAME");
       const lesson = {
         id: makeId("lesson"),
         folderId,
-        title: title.trim(),
+        title: normalizedTitle,
         subtitle,
         description,
         durationMinutes: Number(durationMinutes) || 40,
-        tags: tags.filter(Boolean),
+        tags: Array.isArray(tags) ? tags.filter(Boolean) : [],
         color,
         coverEmoji,
-        status: "published"
+        status: "draft",
+        order: Math.max(0, ...draft.lessons.filter((item) => item.folderId === folderId).map((item) => Number(item.order) || 0)) + 1,
+        createdAt: nowIso()
       };
       draft.lessons.push(lesson);
       addAudit(draft, {
@@ -2087,6 +2490,92 @@
         summary: `创建课节“${lesson.title}”`
       });
       return result(true, lesson);
+    }, "catalog");
+  }
+
+  function updateLesson({ lessonId, patch, actorId }) {
+    return save((draft) => {
+      const lesson = draft.lessons.find((item) => item.id === lessonId);
+      if (!lesson) return result(false, null, "课节不存在", "NOT_FOUND");
+      const nextTitle = patch?.title === undefined ? lesson.title : String(patch.title).trim();
+      if (!nextTitle) return result(false, null, "课节标题不能为空", "INVALID_NAME");
+      lesson.title = nextTitle;
+      if (patch?.subtitle !== undefined) lesson.subtitle = String(patch.subtitle || "");
+      if (patch?.description !== undefined) lesson.description = String(patch.description || "");
+      if (patch?.durationMinutes !== undefined) lesson.durationMinutes = Math.max(1, Number(patch.durationMinutes) || 40);
+      if (patch?.tags !== undefined) lesson.tags = Array.isArray(patch.tags) ? patch.tags.filter(Boolean) : [];
+      if (patch?.color !== undefined) lesson.color = patch.color;
+      if (patch?.coverEmoji !== undefined) lesson.coverEmoji = patch.coverEmoji;
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: "update_lesson",
+        targetType: "lesson",
+        targetId: lesson.id,
+        summary: `更新课节“${lesson.title}”`
+      });
+      return result(true, lesson);
+    }, "catalog");
+  }
+
+  function setLessonStatus({ lessonId, status, actorId }) {
+    return save((draft) => {
+      const lesson = draft.lessons.find((item) => item.id === lessonId);
+      if (!lesson) return result(false, null, "课节不存在", "NOT_FOUND");
+      if (!["draft", "published", "disabled"].includes(status)) return result(false, null, "课节状态无效", "INVALID_STATUS");
+      lesson.status = status;
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: status === "published" ? "publish_lesson" : status === "disabled" ? "disable_lesson" : "draft_lesson",
+        targetType: "lesson",
+        targetId: lesson.id,
+        summary: `${status === "published" ? "发布" : status === "disabled" ? "停用" : "转为草稿"}课节“${lesson.title}”`
+      });
+      return result(true, lesson);
+    }, "catalog");
+  }
+
+  function deleteLesson({ lessonId, actorId }) {
+    return save((draft) => {
+      const lesson = draft.lessons.find((item) => item.id === lessonId);
+      if (!lesson) return result(false, null, "课节不存在", "NOT_FOUND");
+      const inUse = draft.sessions.some((session) => session.lessonId === lessonId)
+        || draft.series.some((series) => series.lessonId === lessonId || (series.lessonIds || []).includes(lessonId))
+        || draft.interactionSets.some((set) => set.lessonId === lessonId)
+        || draft.materialRefs.some((ref) => ref.lessonId === lessonId);
+      if (inUse) return result(false, null, "课节已被班级或内容引用，只能停用，不能删除", "LESSON_IN_USE");
+      draft.lessons = draft.lessons.filter((item) => item.id !== lessonId);
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: "delete_lesson",
+        targetType: "lesson",
+        targetId: lesson.id,
+        summary: `删除课节“${lesson.title}”`
+      });
+      return result(true, lesson);
+    }, "catalog");
+  }
+
+  function moveLesson({ lessonId, direction, actorId }) {
+    return save((draft) => {
+      const lesson = draft.lessons.find((item) => item.id === lessonId);
+      if (!lesson) return result(false, null, "课节不存在", "NOT_FOUND");
+      if (direction !== "up" && direction !== "down") return result(false, null, "移动方向无效", "INVALID_DIRECTION");
+      const sequence = draft.lessons
+        .filter((item) => item.folderId === lesson.folderId)
+        .sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
+      const index = sequence.findIndex((item) => item.id === lessonId);
+      const targetIndex = direction === "up" ? index - 1 : index + 1;
+      if (targetIndex < 0 || targetIndex >= sequence.length) return result(true, sequence);
+      [sequence[index], sequence[targetIndex]] = [sequence[targetIndex], sequence[index]];
+      sequence.forEach((item, orderIndex) => { item.order = orderIndex + 1; });
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: "move_lesson",
+        targetType: "lesson",
+        targetId: lesson.id,
+        summary: `${direction === "up" ? "上移" : "下移"}课节“${lesson.title}”`
+      });
+      return result(true, sequence);
     }, "catalog");
   }
 
@@ -2417,6 +2906,30 @@
     }, "class");
   }
 
+  function deleteClass({ classId, actorId }) {
+    return save((draft) => {
+      const classIndex = draft.classes.findIndex((item) => item.id === classId);
+      const classGroup = draft.classes[classIndex];
+      if (!classGroup) return result(false, null, "班级不存在", "NOT_FOUND");
+      const hasEnrollments = draft.classEnrollments.some((item) => item.classId === classId);
+      const hasSessions = draft.sessions.some((item) => item.classId === classId);
+      const hasAssessments = draft.assessments.some((item) => item.classId === classId);
+      const hasPrimaryStudents = draft.students.some((item) => item.primaryClassId === classId);
+      if (hasEnrollments || hasSessions || hasAssessments || hasPrimaryStudents) {
+        return result(false, null, "班级已有学生、课次或成绩，只能归档", "CLASS_IN_USE");
+      }
+      draft.classes.splice(classIndex, 1);
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: "delete_class",
+        targetType: "class",
+        targetId: classId,
+        summary: `删除空班级“${classGroup.name}”`
+      });
+      return result(true, classGroup);
+    }, "class");
+  }
+
   function addClassMembers({ classId, studentIds, actorId }) {
     return save((draft) => {
       const classGroup = draft.classes.find((item) => item.id === classId);
@@ -2429,7 +2942,14 @@
       if (invalid.length) return result(false, null, "学生不存在", "STUDENT_NOT_FOUND");
       const enrollments = ids.map((studentId) => {
         ensureSchoolMembership(draft, classGroup.schoolId, studentId, "student", nowIso());
-        return ensureClassEnrollment(draft, classId, studentId, "manual", nowIso());
+        const enrollment = ensureClassEnrollment(draft, classId, studentId, "manual", nowIso());
+        const profile = draft.students.find((item) => item.userId === studentId);
+        const currentClass = getClass(draft, profile?.primaryClassId);
+        if (profile && (!currentClass || currentClass.status !== "active" || ["待分班", "待分配班级"].includes(currentClass.name))) {
+          profile.primaryClassId = classId;
+          profile.className = classGroup.name;
+        }
+        return enrollment;
       });
       addAudit(draft, {
         actorId: actorId || draft.currentUserId,
@@ -2451,8 +2971,18 @@
       enrollment.leftAt = nowIso();
       const profile = draft.students.find((item) => item.userId === studentId);
       if (profile?.primaryClassId === classId) {
-        delete profile.primaryClassId;
-        profile.className = "待分班";
+        const remainingClass = draft.classEnrollments
+          .filter((item) => item.studentId === studentId && item.status === "active" && item.classId !== classId)
+          .sort((a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime())
+          .map((item) => getClass(draft, item.classId))
+          .find((item) => item && item.status === "active" && !["待分班", "待分配班级"].includes(item.name));
+        if (remainingClass) {
+          profile.primaryClassId = remainingClass.id;
+          profile.className = remainingClass.name;
+        } else {
+          delete profile.primaryClassId;
+          profile.className = "待分班";
+        }
       }
       addAudit(draft, {
         actorId: actorId || draft.currentUserId,
@@ -2731,11 +3261,15 @@
     "reviewBooking",
     "createClass",
     "updateClass",
+    "deleteClass",
     "addClassMembers",
     "removeClassMember",
     "createSession",
     "createSeries",
     "updateSession",
+    "syncSessionRoster",
+    "addSessionRosterStudents",
+    "removeSessionRosterStudent",
     "updateSeriesSchedule",
     "cancelSession",
     "resolveChangeRequest",
@@ -2750,7 +3284,7 @@
   ]);
 
   function academicMethodSchoolId(draft, method, input, actorId) {
-    if (method === "updateClass" || method === "addClassMembers" || method === "removeClassMember") {
+    if (method === "updateClass" || method === "deleteClass" || method === "addClassMembers" || method === "removeClassMember") {
       return getClass(draft, input.classId)?.schoolId || "";
     }
     if (method === "createClass" || method === "createStudent") {
@@ -2760,7 +3294,14 @@
       return getClass(draft, input.classId)?.schoolId || input.schoolId || activeAcademicSchoolId(draft, actorId);
     }
     if (method === "updateSeriesSchedule") return draft.series.find((item) => item.id === input.seriesId)?.schoolId || "";
-    if (method === "updateSession" || method === "cancelSession" || method === "bookSession") {
+    if (
+      method === "updateSession" ||
+      method === "cancelSession" ||
+      method === "bookSession" ||
+      method === "syncSessionRoster" ||
+      method === "addSessionRosterStudents" ||
+      method === "removeSessionRosterStudent"
+    ) {
       return schoolIdForSession(draft, input.sessionId);
     }
     if (method === "cancelBooking" || method === "reviewBooking") {
@@ -2849,7 +3390,9 @@
     setCurrentUser,
     updatePreferences,
     createSchool,
+    createSchoolStaff,
     updateSchool,
+    deleteSchool,
     saveSchoolMembership,
     bookSession,
     joinWaitlist,
@@ -2859,11 +3402,15 @@
     enrollSeries,
     createClass,
     updateClass,
+    deleteClass,
     addClassMembers,
     removeClassMember,
     createSession,
     createSeries,
     updateSession,
+    syncSessionRoster,
+    addSessionRosterStudents,
+    removeSessionRosterStudent,
     updateSeriesSchedule,
     cancelSession,
     requestSessionChange,
@@ -2873,8 +3420,18 @@
     assignInteractionSessions,
     excludeInteractionSession,
     unassignInteractionSet,
-    createFolder,
+    createSubject,
+    updateSubject,
+    deleteSubject,
+    createCourse,
+    updateCourse,
+    setCourseStatus,
+    deleteCourse,
     createLesson,
+    updateLesson,
+    setLessonStatus,
+    deleteLesson,
+    moveLesson,
     createStudent,
     addMockMaterial,
     attachMaterial,

@@ -281,13 +281,16 @@
       });
     });
 
+    const subjects = [
+      { id: "subject-chinese", name: "中文", description: "中文课程体系与课节内容", color: "#6552ff", order: 1 }
+    ];
+
     const folders = [
-      { id: "folder-root", parentId: null, name: "中文课程库", order: 1, color: "#6552ff", description: "大班课课程内容与材料的总目录" },
-      { id: "folder-greetings", parentId: "folder-root", name: "问候与时间", order: 1, color: "#f4a2c1", description: "问候、时间、日期和日常表达" },
-      { id: "folder-campus", parentId: "folder-root", name: "校园与生活", order: 2, color: "#69d5c5", description: "校园、朋友、饮食和旅行场景" },
-      { id: "folder-travel", parentId: "folder-root", name: "旅行中文", order: 3, color: "#ffad67", description: "机场、酒店与交通表达" },
-      { id: "folder-food-series", parentId: "folder-root", name: "餐厅中文", order: 4, color: "#ffad67", description: "餐厅点餐主题的系列课节" },
-      { id: "folder-club", parentId: "folder-root", name: "中文社团", order: 5, color: "#8c7bff", description: "中文社团学期系列课节" }
+      { id: "folder-greetings", subjectId: "subject-chinese", name: "问候与时间", order: 1, color: "#f4a2c1", tags: ["入门", "日常表达"], status: "published", description: "问候、时间、日期和日常表达" },
+      { id: "folder-campus", subjectId: "subject-chinese", name: "校园与生活", order: 2, color: "#69d5c5", tags: ["校园", "对话"], status: "published", description: "校园、朋友、饮食和旅行场景" },
+      { id: "folder-travel", subjectId: "subject-chinese", name: "旅行中文", order: 3, color: "#ffad67", tags: ["旅行", "场景"], status: "published", description: "机场、酒店与交通表达" },
+      { id: "folder-food-series", subjectId: "subject-chinese", name: "餐厅中文", order: 4, color: "#ffad67", tags: ["饮食", "系列课"], status: "published", description: "餐厅点餐主题的系列课节" },
+      { id: "folder-club", subjectId: "subject-chinese", name: "中文社团", order: 5, color: "#8c7bff", tags: ["社团", "学期课"], status: "published", description: "中文社团学期系列课节" }
     ];
 
     const lessons = [
@@ -301,7 +304,8 @@
         tags: ["入门", "口语", "问候"],
         color: "#6552ff",
         coverEmoji: "👋",
-        status: "published"
+        status: "published",
+        order: 1
       },
       {
         id: "lesson-time",
@@ -313,7 +317,8 @@
         tags: ["时间", "听力", "大班课"],
         color: "#66b7f4",
         coverEmoji: "🕒",
-        status: "published"
+        status: "published",
+        order: 2
       },
       {
         id: "lesson-friends",
@@ -325,7 +330,8 @@
         tags: ["自我介绍", "对话", "初级"],
         color: "#69d5c5",
         coverEmoji: "🧑‍🤝‍🧑",
-        status: "published"
+        status: "published",
+        order: 1
       },
       ...clubLessonTopics.map((topic, index) => ({
         id: clubLessonIds[index],
@@ -337,7 +343,8 @@
         tags: ["社团课", "七年级", `第 ${index + 1} 课`],
         color: "#8c7bff",
         coverEmoji: "🎒",
-        status: "published"
+        status: "published",
+        order: index + 1
       })),
       {
         id: "lesson-food",
@@ -349,7 +356,8 @@
         tags: ["饮食", "情境对话", "词汇"],
         color: "#ffad67",
         coverEmoji: "🍜",
-        status: "published"
+        status: "published",
+        order: 1
       },
       {
         id: "lesson-food-taste",
@@ -361,7 +369,8 @@
         tags: ["饮食", "口味", "形容词"],
         color: "#ff8a5c",
         coverEmoji: "🌶️",
-        status: "published"
+        status: "published",
+        order: 2
       },
       {
         id: "lesson-food-drinks",
@@ -373,7 +382,8 @@
         tags: ["饮食", "饮料", "对话"],
         color: "#66b7f4",
         coverEmoji: "🥤",
-        status: "published"
+        status: "published",
+        order: 3
       },
       {
         id: "lesson-food-pay",
@@ -385,7 +395,8 @@
         tags: ["饮食", "付款", "情境对话"],
         color: "#69d5c5",
         coverEmoji: "💳",
-        status: "published"
+        status: "published",
+        order: 4
       }
     ];
 
@@ -636,11 +647,11 @@
     });
 
     const schools = [
-      { id: "school-sacred-heart", name: "印尼圣心学校", code: "SH", status: "active", createdAt: iso(addDays(now, -180)) },
-      { id: "school-hope", name: "印尼希望学校", code: "HOPE", status: "active", createdAt: iso(addDays(now, -150)) },
-      { id: "school-light", name: "印尼光明学校", code: "LIGHT", status: "active", createdAt: iso(addDays(now, -140)) },
-      { id: "school-bina", name: "印尼培民学校", code: "BINA", status: "active", createdAt: iso(addDays(now, -130)) },
-      { id: "school-demo", name: "AI Chinese 合作校区", code: "DEMO", status: "active", createdAt: iso(addDays(now, -120)) }
+      { id: "school-sacred-heart", name: "印尼圣心学校", code: "SH", timeZone: "Asia/Jakarta", status: "active", createdAt: iso(addDays(now, -180)) },
+      { id: "school-hope", name: "印尼希望学校", code: "HOPE", timeZone: "Asia/Jakarta", status: "active", createdAt: iso(addDays(now, -150)) },
+      { id: "school-light", name: "印尼光明学校", code: "LIGHT", timeZone: "Asia/Jakarta", status: "active", createdAt: iso(addDays(now, -140)) },
+      { id: "school-bina", name: "印尼培民学校", code: "BINA", timeZone: "Asia/Jakarta", status: "active", createdAt: iso(addDays(now, -130)) },
+      { id: "school-demo", name: "AI Chinese 合作校区", code: "DEMO", timeZone: "Asia/Jakarta", status: "active", createdAt: iso(addDays(now, -120)) }
     ];
     function schoolIdForClassName(name) {
       if (name.includes("圣心")) return "school-sacred-heart";
@@ -3436,6 +3447,7 @@
       students,
       classes,
       classEnrollments,
+      subjects,
       folders,
       lessons,
       series,

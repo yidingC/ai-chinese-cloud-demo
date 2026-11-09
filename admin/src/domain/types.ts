@@ -37,6 +37,8 @@ export interface School {
   id: string;
   name: string;
   code: string;
+  /** 学校所在地时区，用于课表和排课时间展示。 */
+  timeZone: string;
   status: "active" | "archived";
   createdAt: string;
 }
@@ -57,6 +59,8 @@ export interface PlatformUser {
   name: string;
   nameZh?: string;
   phone?: string;
+  /** 学生端 App 的绑定账号；为空表示尚未绑定。 */
+  appAccount?: string;
   avatar: string;
   timeZone: string;
   locale: string;
@@ -102,17 +106,32 @@ export interface ClassEnrollment {
   source: "profile" | "booking" | "manual";
 }
 
-export interface CourseFolder {
+export interface CourseSubject {
   id: string;
-  parentId: string | null;
   name: string;
-  order: number;
-  color: string;
   description: string;
+  color: string;
+  order: number;
+}
+
+export type CourseStatus = "draft" | "published" | "disabled";
+
+/** 课程。持久化字段仍放在 folders 中，以兼容既有演示快照。 */
+export interface Course {
+  id: string;
+  subjectId: string;
+  name: string;
+  description: string;
+  color: string;
+  tags: string[];
+  order: number;
+  status: CourseStatus;
+  createdAt?: string;
 }
 
 export interface Lesson {
   id: string;
+  /** 所属课程。字段名沿用历史快照中的 folderId。 */
   folderId: string;
   title: string;
   subtitle: string;
@@ -121,13 +140,15 @@ export interface Lesson {
   tags: string[];
   color: string;
   coverEmoji: string;
-  status: "published" | "draft";
+  status: CourseStatus;
+  order: number;
+  createdAt?: string;
 }
 
 export interface ClassSeries {
   id: string;
   schoolId: string;
-  /** 系列主题对应的课程目录；同一系列内的课节来自同一目录。 */
+  /** 系列主题对应的课程；同一系列内的课节来自同一课程。 */
   folderId: string;
   /** 系列包含的课节，按开课顺序排列。 */
   lessonIds: string[];
@@ -164,10 +185,18 @@ export interface ClassSession {
   language: string;
   roomLabel: string;
   source: "single" | "series";
+  /** 本次课单独的应到名单；建课时从班级成员生成，之后不随班级自动变化。 */
+  roster?: SessionRosterEntry[];
   /** 预约后需要教学管理审核，审核通过才占用名额并加入班级。 */
   approvalRequired?: boolean;
   cancelledAt?: string;
   cancelReason?: string;
+}
+
+export interface SessionRosterEntry {
+  studentId: string;
+  source: "snapshot" | "sync" | "manual";
+  addedAt: string;
 }
 
 export interface Booking {
@@ -529,7 +558,9 @@ export interface PlatformState {
   students: StudentProfile[];
   classes: ClassGroup[];
   classEnrollments: ClassEnrollment[];
-  folders: CourseFolder[];
+  subjects: CourseSubject[];
+  /** 课程列表。persisted key 沿用 folders 以兼容旧快照。 */
+  folders: Course[];
   lessons: Lesson[];
   series: ClassSeries[];
   sessions: ClassSession[];
@@ -564,8 +595,10 @@ export interface PlatformStoreApi {
   subscribe(listener: (state: PlatformState) => void): () => void;
   resetDemo(): StoreResult<PlatformState>;
   setCurrentUser(userId: string): StoreResult<PlatformUser>;
-  createSchool(input: { name: string; code: string; actorId?: string }): StoreResult<School>;
-  updateSchool(input: { schoolId: string; patch: Partial<Pick<School, "name" | "code" | "status">>; actorId?: string }): StoreResult<School>;
+  createSchool(input: { name: string; code: string; timeZone?: string; actorId?: string }): StoreResult<School>;
+  updateSchool(input: { schoolId: string; patch: Partial<Pick<School, "name" | "code" | "timeZone" | "status">>; actorId?: string }): StoreResult<School>;
+  deleteSchool(input: { schoolId: string; actorId?: string }): StoreResult<School>;
+  createSchoolStaff(input: { schoolId: string; role: "academic" | "teacher"; name: string; phone: string; note?: string; timeZone?: string; actorId?: string }): StoreResult<{ user: PlatformUser; membership: SchoolMembership }>;
   saveSchoolMembership(input: { schoolId: string; userId: string; role: SchoolRole; status?: "active" | "left"; actorId?: string }): StoreResult<SchoolMembership>;
   updatePreferences(patch: { language?: "zh-CN" | "id-ID"; timeZone?: string; sidebarCollapsed?: boolean }): StoreResult<PlatformState["ui"]>;
   bookSession(input: { studentId: string; sessionId: string; force?: boolean; reason?: string; source?: string; actorId?: string }): StoreResult<Booking>;
@@ -576,20 +609,34 @@ export interface PlatformStoreApi {
   enrollSeries(input: { studentId: string; seriesId: string; joinAsWaitlist?: boolean; force?: boolean; reason?: string; actorId?: string }): StoreResult<Booking[] | WaitlistEntry>;
   createClass(input: { name: string; teacherId: string; status?: "active" | "archived"; schoolId?: string; actorId?: string }): StoreResult<ClassGroup>;
   updateClass(input: { classId: string; patch: Partial<Pick<ClassGroup, "name" | "teacherId" | "status">>; actorId?: string; reason?: string }): StoreResult<ClassGroup>;
+  deleteClass(input: { classId: string; actorId?: string }): StoreResult<ClassGroup>;
   addClassMembers(input: { classId: string; studentIds: string[]; actorId?: string }): StoreResult<ClassEnrollment[]>;
   removeClassMember(input: { classId: string; studentId: string; actorId?: string }): StoreResult<ClassEnrollment>;
   createSession(input: Partial<ClassSession> & { title: string; lessonId: string; teacherId: string; startAt: string; endAt: string; capacity: number; actorId?: string; reason?: string }): StoreResult<ClassSession>;
   createSeries(input: { title: string; description?: string; className?: string; classId?: string; folderId?: string; lessonIds: string[]; sessionSchedule?: Array<{ lessonId: string; startAt: string }>; teacherId: string; startAt: string; intervalWeeks: number; durationMinutes: number; capacity: number; roomLabel?: string; schoolId?: string; actorId?: string; reason?: string }): StoreResult<ClassSeries>;
   updateSession(input: { sessionId: string; patch: Partial<ClassSession>; actorId?: string; reason?: string }): StoreResult<ClassSession>;
+  syncSessionRoster(input: { sessionId: string; actorId?: string }): StoreResult<SessionRosterEntry[]>;
+  addSessionRosterStudents(input: { sessionId: string; studentIds: string[]; actorId?: string }): StoreResult<SessionRosterEntry[]>;
+  removeSessionRosterStudent(input: { sessionId: string; studentId: string; actorId?: string }): StoreResult<SessionRosterEntry[]>;
   updateSeriesSchedule(input: { seriesId: string; schedule: Array<{ sessionId: string; startAt: string; durationMinutes?: number }>; actorId?: string; reason?: string }): StoreResult<ClassSeries>;
-  cancelSession(input: { sessionId: string; actorId: string; reason: string }): StoreResult<ClassSession>;
+  cancelSession(input: { sessionId: string; actorId: string; reason?: string }): StoreResult<ClassSession>;
   saveInteractionSet(input: Partial<InteractionSet> & { setId?: string; lessonId: string; title: string; phase: Phase; items: InteractionItem[]; countsTowardGrade?: boolean; actorId?: string; publishNote?: string }): StoreResult<{ set: InteractionSet; version: InteractionVersion }>;
   rollbackInteractionVersion(input: { setId: string; versionId: string; actorId?: string }): StoreResult<{ set: InteractionSet; version: InteractionVersion }>;
   assignInteractionSessions(input: { setId: string; sessionIds: string[]; actorId?: string }): StoreResult<InteractionSet>;
   excludeInteractionSession(input: { setId: string; sessionId: string; excluded: boolean; actorId?: string }): StoreResult<InteractionSet>;
   unassignInteractionSet(input: { setId: string; actorId?: string }): StoreResult<InteractionSet>;
-  createFolder(input: { parentId?: string; name: string; description?: string; color?: string; actorId?: string }): StoreResult<CourseFolder>;
+  createSubject(input: { name: string; description?: string; color?: string; actorId?: string }): StoreResult<CourseSubject>;
+  updateSubject(input: { subjectId: string; patch: Partial<Pick<CourseSubject, "name" | "description" | "color">>; actorId?: string }): StoreResult<CourseSubject>;
+  deleteSubject(input: { subjectId: string; actorId?: string }): StoreResult<CourseSubject>;
+  createCourse(input: { subjectId: string; name: string; description?: string; tags?: string[]; color?: string; actorId?: string }): StoreResult<Course>;
+  updateCourse(input: { courseId: string; patch: Partial<Pick<Course, "subjectId" | "name" | "description" | "tags" | "color">>; actorId?: string }): StoreResult<Course>;
+  setCourseStatus(input: { courseId: string; status: CourseStatus; actorId?: string }): StoreResult<Course>;
+  deleteCourse(input: { courseId: string; actorId?: string }): StoreResult<Course>;
   createLesson(input: { folderId: string; title: string; subtitle?: string; description?: string; durationMinutes?: number; tags?: string[]; color?: string; coverEmoji?: string; actorId?: string }): StoreResult<Lesson>;
+  updateLesson(input: { lessonId: string; patch: Partial<Pick<Lesson, "title" | "subtitle" | "description" | "durationMinutes" | "tags" | "color" | "coverEmoji">>; actorId?: string }): StoreResult<Lesson>;
+  setLessonStatus(input: { lessonId: string; status: CourseStatus; actorId?: string }): StoreResult<Lesson>;
+  deleteLesson(input: { lessonId: string; actorId?: string }): StoreResult<Lesson>;
+  moveLesson(input: { lessonId: string; direction: "up" | "down"; actorId?: string }): StoreResult<Lesson[]>;
   createStudent(input: { name: string; phone?: string; timeZone?: string; locale?: string; program?: string; level?: string; className?: string; learningGoal?: string; preferredTeacherId?: string; schoolId?: string; actorId?: string }): StoreResult<{ user: PlatformUser; profile: StudentProfile }>;
   addMockMaterial(input: { title: string; description: string; fileType?: string; language?: string; ownerId?: string; phase?: Phase; lessonId?: string; fileName?: string; sizeLabel?: string }): StoreResult<Material>;
   attachMaterial(input: { materialId: string; lessonId: string; phase: Phase; order?: number; sessionIds?: string[]; actorId?: string }): StoreResult<Material>;

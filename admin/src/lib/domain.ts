@@ -7,6 +7,7 @@ import type {
   LessonMaterialRef,
   Material,
   Phase,
+  PlatformUser,
   PlatformState,
   StudentProfile,
   WaitlistEntry
@@ -24,6 +25,16 @@ export function getStudent(state: PlatformState, studentId: string): StudentProf
   return state.students.find((item) => item.userId === studentId);
 }
 
+const DEMO_UNBOUND_STUDENT_IDS = new Set(["student-raymond", "student-laksmi"]);
+
+/** 演示阶段按学生姓名生成稳定的 App 账号；真实数据有 appAccount 时优先使用。 */
+export function studentAppAccount(user?: PlatformUser) {
+  if (!user || user.role !== "student") return "";
+  if (user.appAccount) return user.appAccount;
+  if (DEMO_UNBOUND_STUDENT_IDS.has(user.id)) return "";
+  return user.name.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 18);
+}
+
 export function getLesson(state: PlatformState, lessonId: string): Lesson | undefined {
   return state.lessons.find((lesson) => lesson.id === lessonId);
 }
@@ -36,6 +47,18 @@ export function getTeacherSessions(state: PlatformState, teacherId: string) {
   return state.sessions
     .filter((session) => session.teacherId === teacherId && session.status !== "cancelled")
     .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+}
+
+export function getSchoolTimeZone(state: PlatformState, schoolId: string) {
+  const school = state.schools.find((item) => item.id === schoolId);
+  if (school?.timeZone) return school.timeZone;
+  const memberships = state.schoolMemberships.filter(
+    (membership) => membership.schoolId === schoolId && membership.status === "active"
+  );
+  const academic = memberships.find((membership) => membership.role === "academic");
+  const member = academic ?? memberships[0];
+  const user = member ? getUser(state, member.userId) : undefined;
+  return user?.timeZone ?? state.ui.timeZone;
 }
 
 export function getStudentBookings(state: PlatformState, studentId: string): Booking[] {

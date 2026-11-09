@@ -85,7 +85,7 @@ export function AssessmentCreateModal({
       }
     >
       {availableClasses.length === 0 ? (
-        <EmptyState title="暂无可发布考核的班级" description="请先在教学管理的“学生管理”中创建班级并加入成员。" />
+        <EmptyState title="暂无可发布考核的班级" description="请先在“班级与学生”中创建班级并加入成员。" />
       ) : (
         <div className="editor-grid grade-assessment-form">
           <Field label="关联班级" className="field-span-2">
