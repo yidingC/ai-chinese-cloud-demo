@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { InteractionSet, Phase } from "../domain/types";
 import { currentUser, getCurrentInteractionVersion } from "../lib/domain";
 import { platform } from "../lib/platform";
@@ -15,7 +16,7 @@ export function InteractionSetPlayerModal({
   set,
   sessionId,
   phase,
-  closeLabel = "关闭",
+  closeLabel,
   onClose
 }: {
   set: InteractionSet;
@@ -24,6 +25,7 @@ export function InteractionSetPlayerModal({
   closeLabel?: string;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const { state, run } = usePlatformStore();
   const user = currentUser(state);
   const version = getCurrentInteractionVersion(state, set);
@@ -38,9 +40,9 @@ export function InteractionSetPlayerModal({
       footer={
         lastResult ? (
           <div className="result-modal-footer">
-            <span>本次得分</span>
+            <span>{t("student.player.score")}</span>
             <strong>{lastResult.score}</strong>
-            {lastResult.score < 100 && <Badge tone="orange">可再次练习提升最佳分</Badge>}
+            {lastResult.score < 100 && <Badge tone="orange">{t("student.player.improve")}</Badge>}
           </div>
         ) : undefined
       }
@@ -65,7 +67,7 @@ export function InteractionSetPlayerModal({
                     wrongItemIds: result.wrongItemIds,
                     pollAnswers: result.pollAnswers
                   }),
-                `练习完成，本次得分 ${result.score}`
+                t("student.player.submittedToast", { score: result.score })
               );
             }}
           />
@@ -75,16 +77,16 @@ export function InteractionSetPlayerModal({
         <div className="player-result-summary">
           <div className="result-score-ring">
             <strong>{lastResult.score}</strong>
-            <span>分</span>
+            <span>{t("student.player.points")}</span>
           </div>
           <div>
-            <h3>{lastResult.score === 100 ? "全部掌握，太棒了！" : "已经完成，再练一次会更好。"}</h3>
-            <p>本次用时 {lastResult.elapsedSeconds} 秒，错题 {lastResult.wrongItemIds.length} 道。</p>
+            <h3>{lastResult.score === 100 ? t("student.player.perfect") : t("student.player.retryMessage")}</h3>
+            <p>{t("student.player.summary", { seconds: lastResult.elapsedSeconds, wrong: lastResult.wrongItemIds.length })}</p>
           </div>
           <PmNote kind="流程" note="再次提交会新增一条作答历史，并保留历史最高分。">
-            <Button onClick={() => setLastResult(null)}>再练一次</Button>
+            <Button onClick={() => setLastResult(null)}>{t("student.retry")}</Button>
           </PmNote>
-          <Button variant="secondary" onClick={onClose}>{closeLabel}</Button>
+          <Button variant="secondary" onClick={onClose}>{closeLabel ?? t("common.close")}</Button>
         </div>
       )}
     </Modal>

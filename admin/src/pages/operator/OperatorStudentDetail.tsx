@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, CalendarPlus, ClipboardPlus, Globe2, Pencil, Phone, Save, Star, TrendingUp, UsersRound } from "lucide-react";
+import { ArrowLeft, CalendarPlus, Globe2, Pencil, Phone, Save, Star, TrendingUp, UsersRound } from "lucide-react";
 import { platform } from "../../lib/platform";
 import { usePlatformStore } from "../../store/usePlatformStore";
 import { currentUser, getLesson, getSession, getStudent, getUser, studentAppAccount, studentMetrics } from "../../lib/domain";
@@ -143,17 +143,15 @@ export function OperatorStudentDetail({
         description={academic
           ? `${profile.level} · ${profile.program} · ${user.timeZone}`
           : `${profile.level} · ${profile.program}`}
-        actions={
-          <Button onClick={openEdit}><Pencil size={16} /> 编辑档案</Button>
-        }
+        actions={academic ? undefined : <Button onClick={openEdit}><Pencil size={16} /> 编辑档案</Button>}
       />
 
-      {academic ? (
+      {academic && (
         <section className="student-profile-hero">
           <Avatar label={user.avatar} size="lg" tone="purple" />
           <div>
+            <div className="profile-name-row"><h2>{user.name}</h2><Badge tone="blue">只读档案</Badge></div>
             <p className="profile-summary-line">{profile.learningGoal}</p>
-            <div className="profile-tags">{profile.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
           </div>
           <div className="profile-joined">
             <small>加入时间</small>
@@ -161,10 +159,6 @@ export function OperatorStudentDetail({
             <span>{relativeTime(profile.joinedAt, state.ui.language)}</span>
           </div>
         </section>
-      ) : profile.tags.length > 0 && (
-        <div className="profile-tags operator-profile-tags">
-          {profile.tags.map((tag) => <span key={tag}>{tag}</span>)}
-        </div>
       )}
 
       {academic ? (
@@ -210,9 +204,12 @@ export function OperatorStudentDetail({
               {metrics.bookings.map((booking) => {
                 const session = getSession(state, booking.sessionId);
                 const lesson = session ? getLesson(state, session.lessonId) : undefined;
+                const courseName = lesson
+                  ? state.folders.find((folder) => folder.id === lesson.folderId)?.name
+                  : undefined;
                 return (
                   <div className="data-table-row" key={booking.id}>
-                    <span><strong>{lesson?.title}</strong><small>{session?.title}</small></span>
+                    <span><strong>{lesson?.title ?? session?.title}</strong>{courseName && <small>{courseName}</small>}</span>
                     <span>{session ? formatDateTime(session.startAt, state.ui.timeZone, state.ui.language) : "-"}</span>
                     <span><Badge tone={booking.source === "operator" || booking.source === "academic" ? "orange" : "mint"}>{booking.source === "academic" ? "学校教务代约" : booking.source === "operator" ? "教学管理代约" : "学生预约"}</Badge></span>
                     <span><Badge tone="mint">已预约</Badge></span>
@@ -225,12 +222,13 @@ export function OperatorStudentDetail({
               <div className="data-table-head"><span>课程</span><span>时间</span><span>班级 / 教师</span><span>状态</span></div>
               {operatorCourseRows.map(({ session, booking }) => {
                 const lesson = getLesson(state, session.lessonId);
+                const courseName = state.folders.find((folder) => folder.id === lesson?.folderId)?.name;
                 const classItem = state.classes.find((item) => item.id === session.classId);
                 const teacher = getUser(state, session.teacherId);
                 const status = operatorCourseStatus(session, booking);
                 return (
                   <div className="data-table-row" key={session.id}>
-                    <span><strong>{lesson?.title ?? session.title}</strong><small>{session.title}</small></span>
+                    <span><strong>{lesson?.title ?? session.title}</strong>{courseName && <small>{courseName}</small>}</span>
                     <span>{formatDateTime(session.startAt, state.ui.timeZone, state.ui.language)}</span>
                     <span><strong>{classItem?.name ?? session.className}</strong><small>{teacher?.name ?? "未分配教师"}</small></span>
                     <span><Badge tone={status.tone}>{status.label}</Badge></span>
@@ -247,10 +245,7 @@ export function OperatorStudentDetail({
         <div className="operator-grade-results">
           <Card className="operator-formal-grades">
             <div className="grade-table-heading">
-              <div><h2>正式成绩</h2><p>{academic ? "学校教务可以补录或修正本校学生考核成绩，所有改动写入本校操作日志。" : "教学管理可以补录或修正学生已有的考核成绩，所有改动写入操作日志。"}</p></div>
-              <Button variant="secondary" disabled={!studentClassIds.length} onClick={() => setCreateAssessmentOpen(true)}>
-                <ClipboardPlus size={16} /> 新建考核
-              </Button>
+              <div><h2>正式成绩</h2><p>只读查看本校学生的正式成绩记录。</p></div>
             </div>
             <div className="grade-record-list">
               {studentAssessments.map((assessment) => {
@@ -266,7 +261,6 @@ export function OperatorStudentDetail({
                     <div className="grade-record-score">
                       <strong>{score?.normalizedScore ?? "--"}</strong>
                       <small>{score?.status === "graded" ? "已录入" : score?.status === "absent" ? "缺考" : score?.status === "excused" ? "免考" : "待录"}</small>
-                      <Button size="sm" variant="ghost" onClick={() => setScoreAssessmentId(assessment.id)}>补录 / 修改</Button>
                     </div>
                   </article>
                 );
@@ -309,38 +303,38 @@ export function OperatorStudentDetail({
         </Card>
       )}
 
-      <Modal
-        open={editing}
-        title="编辑学生档案"
-        onClose={() => setEditing(false)}
-        width="720px"
-        footer={
-          <div className="modal-footer-split modal-footer-end">
-            <div>
-              <Button variant="ghost" onClick={() => setEditing(false)}>取消</Button>
-              <Button disabled={!form.name.trim()} onClick={save}><Save size={16} /> 保存档案</Button>
+      {!academic && (
+        <Modal
+          open={editing}
+          title="编辑学生档案"
+          onClose={() => setEditing(false)}
+          width="720px"
+          footer={
+            <div className="modal-footer-split modal-footer-end">
+              <div>
+                <Button variant="ghost" onClick={() => setEditing(false)}>取消</Button>
+                <Button disabled={!form.name.trim()} onClick={save}><Save size={16} /> 保存档案</Button>
+              </div>
             </div>
+          }
+        >
+          <div className="editor-grid">
+            <Field label="姓名"><TextInput value={form.name} onChange={(event) => setForm((value) => ({ ...value, name: event.target.value }))} /></Field>
+            <Field label="联系方式"><TextInput value={form.phone} onChange={(event) => setForm((value) => ({ ...value, phone: event.target.value }))} /></Field>
+            <Field label="等级"><TextInput value={form.level} onChange={(event) => setForm((value) => ({ ...value, level: event.target.value }))} /></Field>
+            <Field label="时区">
+              <Select value={form.timeZone} onChange={(event) => setForm((value) => ({ ...value, timeZone: event.target.value }))}>
+                <option value="Asia/Jakarta">GMT+7 雅加达</option>
+                <option value="Asia/Shanghai">GMT+8 上海</option>
+                <option value="Asia/Singapore">GMT+8 新加坡</option>
+              </Select>
+            </Field>
+            <Field label="课程项目" className="field-span-2"><TextInput value={form.program} onChange={(event) => setForm((value) => ({ ...value, program: event.target.value }))} /></Field>
           </div>
-        }
-      >
-        <div className="editor-grid">
-          <Field label="姓名"><TextInput value={form.name} disabled={academic} onChange={(event) => setForm((value) => ({ ...value, name: event.target.value }))} /></Field>
-          <Field label="联系方式"><TextInput value={form.phone} disabled={academic} onChange={(event) => setForm((value) => ({ ...value, phone: event.target.value }))} /></Field>
-          <Field label="等级"><TextInput value={form.level} onChange={(event) => setForm((value) => ({ ...value, level: event.target.value }))} /></Field>
-          <Field label="时区">
-            <Select value={form.timeZone} onChange={(event) => setForm((value) => ({ ...value, timeZone: event.target.value }))}>
-              <option value="Asia/Jakarta">GMT+7 雅加达</option>
-              <option value="Asia/Shanghai">GMT+8 上海</option>
-              <option value="Asia/Singapore">GMT+8 新加坡</option>
-            </Select>
-          </Field>
-          <Field label="课程项目" className="field-span-2"><TextInput value={form.program} onChange={(event) => setForm((value) => ({ ...value, program: event.target.value }))} /></Field>
-          {academic && <Field label="学习目标" className="field-span-2"><textarea className="input textarea" value={form.learningGoal} onChange={(event) => setForm((value) => ({ ...value, learningGoal: event.target.value }))} /></Field>}
-          {academic && <Field label="学校教务备注" className="field-span-2"><textarea className="input textarea" value={form.notes} onChange={(event) => setForm((value) => ({ ...value, notes: event.target.value }))} /></Field>}
-        </div>
-      </Modal>
+        </Modal>
+      )}
 
-      {academic && (
+      {!academic && (
         <AssessmentCreateModal
           open={createAssessmentOpen}
           defaultClassId={studentClassIds[0] ?? ""}
@@ -349,7 +343,7 @@ export function OperatorStudentDetail({
           onCreated={setScoreAssessmentId}
         />
       )}
-      {academic && scoreAssessmentId && (
+      {!academic && scoreAssessmentId && (
         <AssessmentScoresModal assessmentId={scoreAssessmentId} focusStudentId={studentId} onClose={() => setScoreAssessmentId("")} />
       )}
     </>

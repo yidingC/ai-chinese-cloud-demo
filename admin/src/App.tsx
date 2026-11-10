@@ -7,10 +7,10 @@ import type { Role } from "./domain/types";
 import { LoginPage } from "./pages/LoginPage";
 import { NotificationsPage } from "./pages/NotificationsPage";
 import { StudentDashboard } from "./pages/student/StudentDashboard";
-import { StudentBook } from "./pages/student/StudentBook";
 import { StudentSchedule } from "./pages/student/StudentSchedule";
 import { StudentLesson } from "./pages/student/StudentLesson";
 import { StudentGrades } from "./pages/student/StudentGrades";
+import { StudentResults } from "./pages/student/StudentResults";
 import { TeacherDashboard } from "./pages/teacher/TeacherDashboard";
 import { TeacherLiveClass } from "./pages/teacher/TeacherLiveClass";
 import { TeacherLiveClassPreview } from "./pages/teacher/TeacherLiveClassPreview";
@@ -18,18 +18,15 @@ import { TeacherSchedule } from "./pages/teacher/TeacherSchedule";
 
 import { TeacherSessionDesign } from "./pages/teacher/TeacherSessionDesign";
 import { TeacherMaterials } from "./pages/teacher/TeacherMaterials";
-import { TeacherResults } from "./pages/teacher/TeacherResults";
-import { TeacherGrades } from "./pages/teacher/TeacherGrades";
+import { AcademicResults, TeacherResults } from "./pages/teacher/TeacherResults";
+import { AcademicGrades, TeacherGrades } from "./pages/teacher/TeacherGrades";
 import { OperatorDashboard } from "./pages/operator/OperatorDashboard";
 import { CourseCatalog } from "./pages/operator/CourseCatalog";
 import { OperatorScheduling } from "./pages/operator/OperatorScheduling";
-import { OperatorSessionDetail } from "./pages/operator/OperatorSessionDetail";
 import { OperatorStudents } from "./pages/operator/OperatorStudents";
 import { OperatorStudentDetail } from "./pages/operator/OperatorStudentDetail";
-import { OperatorAudit } from "./pages/operator/OperatorAudit";
 import { OperatorSchools } from "./pages/operator/OperatorSchools";
 import { AcademicDashboard } from "./pages/academic/AcademicDashboard";
-import { TeacherPerformance, TeacherPerformanceDetail } from "./pages/academic/TeacherPerformance";
 
 function RoleGate({ role, children }: { role: Role; children: ReactNode }) {
   const state = usePlatformStore((store) => store.state);
@@ -58,6 +55,12 @@ function SessionRosterRedirect() {
   return <Navigate to={`/teacher/schedule?roster=${sessionId}`} replace />;
 }
 
+/** 运营端课次不再有独立详情页，旧链接统一回到排课列表并定位对应卡片。 */
+function SessionFocusRedirect({ basePath }: { basePath: string }) {
+  const { sessionId = "" } = useParams();
+  return <Navigate to={`${basePath}/scheduling?focus=${encodeURIComponent(sessionId)}`} replace />;
+}
+
 /** 互动设计库已并入材料库，旧链接保留并自动切换到“我的互动设计”。 */
 function InteractionLibraryRedirect() {
   const location = useLocation();
@@ -77,11 +80,11 @@ export default function App() {
 
           <Route path="/student" element={<RoleGate role="student"><Outlet /></RoleGate>}>
             <Route index element={<StudentDashboard />} />
-            <Route path="book" element={<StudentBook />} />
+            <Route path="book" element={<Navigate to="/student/schedule" replace />} />
             <Route path="schedule" element={<StudentSchedule />} />
             <Route path="lesson/:lessonId" element={<StudentLesson />} />
             <Route path="grades" element={<StudentGrades />} />
-            <Route path="results" element={<Navigate to="/student/grades" replace />} />
+            <Route path="results" element={<StudentResults />} />
           </Route>
 
           <Route path="/teacher" element={<RoleGate role="teacher"><Outlet /></RoleGate>}>
@@ -100,12 +103,14 @@ export default function App() {
           <Route path="/academic" element={<RoleGate role="academic"><Outlet /></RoleGate>}>
             <Route index element={<AcademicDashboard />} />
             <Route path="scheduling" element={<OperatorScheduling academic basePath="/academic" />} />
-            <Route path="sessions/:sessionId" element={<OperatorSessionDetail academic basePath="/academic" />} />
+            <Route path="sessions/:sessionId" element={<SessionFocusRedirect basePath="/academic" />} />
             <Route path="students" element={<OperatorStudents academic basePath="/academic" />} />
             <Route path="students/:studentId" element={<OperatorStudentDetail academic basePath="/academic" />} />
-            <Route path="performance" element={<TeacherPerformance />} />
-            <Route path="performance/:teacherId" element={<TeacherPerformanceDetail />} />
-            <Route path="audit" element={<OperatorAudit academic />} />
+            <Route path="results" element={<AcademicResults />} />
+            <Route path="grades" element={<AcademicGrades />} />
+            <Route path="performance" element={<Navigate to="/academic" replace />} />
+            <Route path="performance/:teacherId" element={<Navigate to="/academic" replace />} />
+            <Route path="audit" element={<Navigate to="/academic" replace />} />
             <Route path="catalog" element={<Navigate to="/academic" replace />} />
             <Route path="governance" element={<Navigate to="/academic" replace />} />
           </Route>
@@ -114,7 +119,7 @@ export default function App() {
             <Route index element={<OperatorDashboard />} />
             <Route path="catalog" element={<CourseCatalog />} />
             <Route path="scheduling" element={<OperatorScheduling />} />
-            <Route path="sessions/:sessionId" element={<OperatorSessionDetail />} />
+            <Route path="sessions/:sessionId" element={<SessionFocusRedirect basePath="/operator" />} />
             <Route path="students" element={<OperatorStudents />} />
             <Route path="students/:studentId" element={<OperatorStudentDetail />} />
             <Route path="schools" element={<OperatorSchools />} />

@@ -25,7 +25,7 @@ describe("operator student workspace", () => {
     window.location.hash = "#/operator/students";
     render(<App />);
 
-    const schoolSelect = await screen.findByRole("combobox", { name: "当前学校" });
+    const schoolSelect = await screen.findByRole("combobox", { name: "学校范围" });
     expect(screen.getByText("印尼圣心学校7年级A班")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /返回学校与教职工/ })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: /学生档案/ }));
@@ -39,6 +39,42 @@ describe("operator student workspace", () => {
 
     await waitFor(() => expect(screen.queryByText("印尼圣心学校7年级A班")).not.toBeInTheDocument());
     expect(screen.getByText("印尼希望学校7年级体验班")).toBeInTheDocument();
+  });
+
+  it("aggregates all schools and lets a new class choose its school", async () => {
+    platform.setCurrentUser("operator-ray");
+    refreshAppStore();
+    window.location.hash = "#/operator/students";
+    render(<App />);
+
+    const schoolSelect = await screen.findByRole("combobox", { name: "学校范围" });
+    fireEvent.change(schoolSelect, { target: { value: "all" } });
+
+    const hopeClass = await screen.findByText("印尼希望学校7年级体验班");
+    expect(screen.getByText("印尼圣心学校7年级A班")).toBeInTheDocument();
+
+    const hopeRow = hopeClass.closest("article");
+    expect(hopeRow).not.toBeNull();
+    fireEvent.click(within(hopeRow!).getByRole("button", { name: /管理学生/ }));
+    expect(await screen.findByRole("dialog", { name: /学生名单 · 印尼希望学校7年级体验班/ })).toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /关闭/ }));
+
+    fireEvent.click(screen.getByRole("button", { name: /新建班级/ }));
+    const dialog = await screen.findByRole("dialog", { name: "新建班级" });
+    const classSchool = within(dialog).getByRole("combobox", { name: "所属学校" });
+    expect(classSchool).toHaveValue("");
+
+    fireEvent.change(classSchool, { target: { value: "school-hope" } });
+    expect(within(dialog).getByRole("combobox", { name: "教师" })).toHaveDisplayValue("Berenice 老师");
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "班级名称" }), { target: { value: "跨校测试班" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存班级" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "新建班级" })).not.toBeInTheDocument());
+    const created = platform.getState().classes.find((item) => item.name === "跨校测试班");
+    expect(created?.schoolId).toBe("school-hope");
+    const createdRow = screen.getByText("跨校测试班").closest("article");
+    expect(createdRow).not.toBeNull();
+    expect(within(createdRow!).getByText("印尼希望学校")).toBeInTheDocument();
   });
 
   it("shows only the current class roster and can add another same-school student", async () => {
@@ -118,6 +154,10 @@ describe("operator student workspace", () => {
     expect(screen.queryByText("在读班级")).not.toBeInTheDocument();
     expect(screen.queryByText("加入时间")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /去代约课程/ })).not.toBeInTheDocument();
+    expect(screen.getAllByText("嗨！你好！").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("问候与时间").length).toBeGreaterThan(0);
+    expect(screen.queryByText("问候口语大班课")).not.toBeInTheDocument();
+    expect(screen.queryByText("问候复习课")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /编辑档案/ }));
     const editDialog = await screen.findByRole("dialog", { name: "编辑学生档案" });

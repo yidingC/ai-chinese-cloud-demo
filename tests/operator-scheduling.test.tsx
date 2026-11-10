@@ -35,6 +35,19 @@ function dateTimeLocalValue(date: Date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+function sessionTitleFor(
+  lessons: Array<{ id: string; title: string }>,
+  session: { lessonId: string; title: string }
+) {
+  return lessons.find((lesson) => lesson.id === session.lessonId)?.title ?? session.title;
+}
+
+function cardFor(sessionId: string) {
+  return document.querySelector<HTMLElement>(
+    `.operator-session-card[data-session-id="${sessionId}"]`
+  );
+}
+
 describe("operator scheduling", () => {
   beforeEach(() => {
     platform.resetDemo();
@@ -45,7 +58,7 @@ describe("operator scheduling", () => {
     window.location.hash = "";
   });
 
-  it("splits single sessions into upcoming and history by end time", async () => {
+  it("splits sessions into upcoming and history by end time", async () => {
     platform.setCurrentUser("operator-ray");
     refreshAppStore();
     window.location.hash = "#/operator/scheduling";
@@ -53,11 +66,11 @@ describe("operator scheduling", () => {
 
     const state = platform.getState();
     const now = Date.now();
-    const singleSessions = state.sessions.filter((session) => session.source === "single");
-    const upcoming = singleSessions
+    const scheduledSessions = state.sessions;
+    const upcoming = scheduledSessions
       .filter((session) => session.status !== "cancelled" && new Date(session.endAt).getTime() >= now)
       .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
-    const history = singleSessions
+    const history = scheduledSessions
       .filter((session) => session.status === "cancelled" || new Date(session.endAt).getTime() < now)
       .sort((a, b) => new Date(b.startAt).getTime() - new Date(a.startAt).getTime());
     expect(upcoming.length).toBeGreaterThan(0);
@@ -73,9 +86,15 @@ describe("operator scheduling", () => {
     expect(upcomingTab).toHaveAttribute("aria-selected", "true");
     expect(upcomingTab).toHaveTextContent(String(upcoming.length));
     expect(screen.queryByText(/筛选后 .* 个课次/)).not.toBeInTheDocument();
-    expect(screen.getByText(upcoming[0].title)).toBeInTheDocument();
-    expect(screen.queryByText(history[0].title)).not.toBeInTheDocument();
-    const firstCard = screen.getByText(upcoming[0].title).closest(".operator-session-card");
+    const firstCard = cardFor(upcoming[0].id);
+    expect(firstCard).not.toBeNull();
+    expect(
+      within(firstCard as HTMLElement).getByRole("heading", {
+        level: 3,
+        name: sessionTitleFor(state.lessons, upcoming[0])
+      })
+    ).toBeInTheDocument();
+    expect(cardFor(history[0].id)).toBeNull();
     expect(firstCard).toHaveTextContent(expectedStatusLabel(upcoming[0], now));
     expect(screen.getAllByText(/GMT\+7 雅加达/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/个余位/)).not.toBeInTheDocument();
@@ -98,31 +117,30 @@ describe("operator scheduling", () => {
     ).toBe(true);
 
     fireEvent.click(historyTab);
-    await waitFor(() => expect(screen.getByText(history[0].title)).toBeInTheDocument());
-    expect(screen.getByText(history[0].title).closest(".operator-session-card"))
-      .toHaveTextContent(expectedStatusLabel(history[0], now));
-    expect(screen.queryByText(upcoming[0].title)).not.toBeInTheDocument();
+    await waitFor(() => expect(cardFor(history[0].id)).not.toBeNull());
+    expect(cardFor(history[0].id)).toHaveTextContent(expectedStatusLabel(history[0], now));
+    expect(cardFor(upcoming[0].id)).toBeNull();
 
     fireEvent.click(allTab);
-    expect(screen.getByText(history[0].title)).toBeInTheDocument();
-    expect(screen.getByText(upcoming[0].title)).toBeInTheDocument();
+    expect(cardFor(history[0].id)).not.toBeNull();
+    expect(cardFor(upcoming[0].id)).not.toBeNull();
   });
 
-  it("filters single sessions by school, class, teacher and date", async () => {
+  it("filters sessions by school, class, teacher and date", async () => {
     platform.setCurrentUser("operator-ray");
     refreshAppStore();
     window.location.hash = "#/operator/scheduling";
     const { container } = render(<App />);
 
     const state = platform.getState();
-    const singleSessions = state.sessions.filter((session) => session.source === "single");
-    const target = [...singleSessions].sort(
+    const scheduledSessions = state.sessions;
+    const target = [...scheduledSessions].sort(
       (a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime()
     )[0]!;
     const schoolTimeZone = state.schools.find((school) => school.id === target.schoolId)?.timeZone
       ?? state.ui.timeZone;
     const targetDate = dateKeyInTimeZone(target.startAt, schoolTimeZone);
-    const expected = singleSessions.filter(
+    const expected = scheduledSessions.filter(
       (session) =>
         session.schoolId === target.schoolId &&
         session.classId === target.classId &&
@@ -157,11 +175,11 @@ describe("operator scheduling", () => {
       expect(screen.getByRole("tab", { name: /^全部/ })).toHaveAttribute("aria-selected", "true")
     );
     expect(container.querySelectorAll(".operator-session-card")).toHaveLength(expected.length);
-    expect(screen.getByText(`筛选后 ${expected.length} / 共 ${singleSessions.length} 个课次`)).toBeInTheDocument();
+    expect(screen.getByText(`筛选后 ${expected.length} / 共 ${scheduledSessions.length} 个课次`)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
     await waitFor(() =>
-      expect(container.querySelectorAll(".operator-session-card")).toHaveLength(singleSessions.length)
+      expect(container.querySelectorAll(".operator-session-card")).toHaveLength(scheduledSessions.length)
     );
   });
 
@@ -183,7 +201,7 @@ describe("operator scheduling", () => {
     expect(historical).toBeDefined();
 
     await screen.findByRole("tab", { name: /即将开始/ });
-    const upcomingCard = screen.getByRole("heading", { level: 3, name: upcoming!.title }).closest(".operator-session-card");
+    const upcomingCard = cardFor(upcoming!.id);
     expect(upcomingCard).not.toBeNull();
     expect(within(upcomingCard as HTMLElement).getByRole("button", { name: "编辑" })).toBeInTheDocument();
     expect(within(upcomingCard as HTMLElement).getByRole("button", { name: "名单" })).toBeInTheDocument();
@@ -191,12 +209,12 @@ describe("operator scheduling", () => {
     expect(within(upcomingCard as HTMLElement).queryByRole("button", { name: "详情" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: /历史课程/ }));
-    await waitFor(() => expect(screen.getByRole("heading", { level: 3, name: historical!.title })).toBeInTheDocument());
-    const historicalCard = screen.getByRole("heading", { level: 3, name: historical!.title }).closest(".operator-session-card");
+    await waitFor(() => expect(cardFor(historical!.id)).not.toBeNull());
+    const historicalCard = cardFor(historical!.id);
     expect(historicalCard).not.toBeNull();
     expect(within(historicalCard as HTMLElement).queryByRole("button", { name: "编辑" })).not.toBeInTheDocument();
     expect(within(historicalCard as HTMLElement).queryByRole("button", { name: "取消" })).not.toBeInTheDocument();
-    expect(within(historicalCard as HTMLElement).getByRole("button", { name: "详情" })).toBeInTheDocument();
+    expect(within(historicalCard as HTMLElement).queryByRole("button", { name: "详情" })).not.toBeInTheDocument();
     expect(within(historicalCard as HTMLElement).getByRole("button", { name: "名单" })).toBeInTheDocument();
   });
 
@@ -213,7 +231,7 @@ describe("operator scheduling", () => {
     expect(session).toBeDefined();
 
     await screen.findByRole("tab", { name: /即将开始/ });
-    const card = screen.getByRole("heading", { level: 3, name: session!.title }).closest(".operator-session-card");
+    const card = cardFor(session!.id);
     expect(card).not.toBeNull();
     fireEvent.click(within(card as HTMLElement).getByRole("button", { name: "取消" }));
 
@@ -241,13 +259,14 @@ describe("operator scheduling", () => {
     expect(session).toBeDefined();
 
     await screen.findByRole("tab", { name: /即将开始/ });
-    const card = screen.getByRole("heading", { level: 3, name: session!.title }).closest(".operator-session-card");
+    const card = cardFor(session!.id);
     expect(card).not.toBeNull();
     fireEvent.click(within(card as HTMLElement).getByRole("button", { name: "编辑" }));
 
     const dialog = await screen.findByRole("dialog", { name: "编辑课次" });
-    const titleInput = within(dialog).getByPlaceholderText("留空则按课节名自动生成") as HTMLInputElement;
-    expect(titleInput.value).toBe(session!.title);
+    expect(within(dialog).queryByText("课次标题")).not.toBeInTheDocument();
+    expect((within(dialog).getByRole("combobox", { name: /^课节/ }) as HTMLSelectElement).value)
+      .toBe(session!.lessonId);
     expect((within(dialog).getByRole("combobox", { name: /^班级/ }) as HTMLSelectElement).value).toBe(session!.classId);
     expect((within(dialog).getByRole("combobox", { name: /^授课教师/ }) as HTMLSelectElement).value).toBe(session!.teacherId);
     expect((within(dialog).getByLabelText("教室（选填）") as HTMLInputElement).value).toBe(session!.roomLabel);
@@ -292,7 +311,61 @@ describe("operator scheduling", () => {
       .toBe(filteredSchool!.id);
     expect((within(dialog).getByRole("combobox", { name: /^班级/ }) as HTMLSelectElement).value)
       .toBe(expectedClass?.id ?? "");
-    expect((within(dialog).getByPlaceholderText("留空则按课节名自动生成") as HTMLInputElement).value).toBe("");
+    expect(within(dialog).queryByText("课次标题")).not.toBeInTheDocument();
+    expect((within(dialog).getByRole("combobox", { name: /^课程/ }) as HTMLSelectElement).value).toBe("");
+    expect((within(dialog).getByRole("combobox", { name: /^课节/ }) as HTMLSelectElement).value).toBe("");
+    expect(within(dialog).getByRole("button", { name: "确认排课" })).toBeDisabled();
+  });
+
+  it("requires choosing a course before a published lesson", async () => {
+    platform.setCurrentUser("operator-ray");
+    refreshAppStore();
+    window.location.hash = "#/operator/scheduling";
+    render(<App />);
+
+    const state = platform.getState();
+    const courses = state.folders.filter(
+      (course) =>
+        course.status === "published" &&
+        state.lessons.some((lesson) => lesson.folderId === course.id && lesson.status === "published")
+    );
+    expect(courses.length).toBeGreaterThan(1);
+    const course = courses[0]!;
+    const otherCourse = courses[1]!;
+    const publishedLessons = state.lessons.filter(
+      (lesson) => lesson.folderId === course.id && lesson.status === "published"
+    );
+    expect(publishedLessons.length).toBeGreaterThan(0);
+
+    await screen.findByRole("tab", { name: /即将开始/ });
+    fireEvent.click(screen.getByRole("button", { name: "排课" }));
+    const dialog = await screen.findByRole("dialog", { name: "排课" });
+    const courseSelect = within(dialog).getByRole("combobox", { name: /^课程/ }) as HTMLSelectElement;
+    const lessonSelect = within(dialog).getByRole("combobox", { name: /^课节/ }) as HTMLSelectElement;
+    const confirm = within(dialog).getByRole("button", { name: "确认排课" });
+
+    expect(courseSelect.value).toBe("");
+    expect(lessonSelect).toBeDisabled();
+    expect(confirm).toBeDisabled();
+
+    fireEvent.change(courseSelect, { target: { value: course.id } });
+    expect(lessonSelect).not.toBeDisabled();
+    const lessonOptionValues = Array.from(lessonSelect.options)
+      .map((option) => option.value)
+      .filter(Boolean);
+    expect(lessonOptionValues).toEqual(publishedLessons.map((lesson) => lesson.id));
+    expect(confirm).toBeDisabled();
+
+    const lesson = publishedLessons[0]!;
+    fireEvent.change(lessonSelect, { target: { value: lesson.id } });
+    expect(lessonSelect.value).toBe(lesson.id);
+    expect(confirm).not.toBeDisabled();
+    expect((within(dialog).getByLabelText("单次时长（分钟）") as HTMLInputElement).value)
+      .toBe(String(lesson.durationMinutes));
+
+    fireEvent.change(courseSelect, { target: { value: otherCourse.id } });
+    expect(lessonSelect.value).toBe("");
+    expect(confirm).toBeDisabled();
   });
 
   it("does not carry an edited session into the next create form", async () => {
@@ -301,24 +374,34 @@ describe("operator scheduling", () => {
     window.location.hash = "#/operator/scheduling";
     render(<App />);
 
-    const session = platform.getState().sessions.find(
+    const state = platform.getState();
+    const session = state.sessions.find(
       (item) => item.source === "single" && item.status !== "cancelled" && new Date(item.startAt).getTime() > Date.now()
     );
     expect(session).toBeDefined();
 
     await screen.findByRole("tab", { name: /即将开始/ });
-    const card = screen.getByRole("heading", { level: 3, name: session!.title }).closest(".operator-session-card");
+    const card = cardFor(session!.id);
     fireEvent.click(within(card as HTMLElement).getByRole("button", { name: "编辑" }));
 
     const editDialog = await screen.findByRole("dialog", { name: "编辑课次" });
-    const titleInput = within(editDialog).getByPlaceholderText("留空则按课节名自动生成");
-    fireEvent.change(titleInput, { target: { value: "上一次编辑的残留标题" } });
+    expect(within(editDialog).queryByText("课次标题")).not.toBeInTheDocument();
+    const sessionCourseId = state.lessons.find((lesson) => lesson.id === session!.lessonId)?.folderId;
+    const editedCourse = state.folders.find(
+      (folder) => folder.id !== sessionCourseId && folder.status === "published"
+    );
+    fireEvent.change(within(editDialog).getByRole("combobox", { name: /^课程/ }), {
+      target: { value: editedCourse?.id ?? "" }
+    });
     fireEvent.click(within(editDialog).getByRole("button", { name: "取消" }));
     expect(screen.queryByRole("dialog", { name: "编辑课次" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "排课" }));
     const createDialog = await screen.findByRole("dialog", { name: "排课" });
-    expect((within(createDialog).getByPlaceholderText("留空则按课节名自动生成") as HTMLInputElement).value).toBe("");
+    expect(within(createDialog).queryByText("课次标题")).not.toBeInTheDocument();
+    expect((within(createDialog).getByRole("combobox", { name: /^课程/ }) as HTMLSelectElement).value).toBe("");
+    expect((within(createDialog).getByRole("combobox", { name: /^课节/ }) as HTMLSelectElement).value).toBe("");
+    expect(within(createDialog).getByRole("button", { name: "确认排课" })).toBeDisabled();
   });
 
   it("switches to all sessions while searching from upcoming and restores the tab after clearing", async () => {
@@ -333,56 +416,75 @@ describe("operator scheduling", () => {
       (session) => session.source === "single" && (session.status === "cancelled" || new Date(session.endAt).getTime() < now)
     );
     expect(historical).toBeDefined();
+    const historicalTitle = sessionTitleFor(state.lessons, historical!);
 
     expect(await screen.findByRole("tab", { name: /即将开始/ })).toHaveAttribute("aria-selected", "true");
     fireEvent.change(screen.getByPlaceholderText("搜索课次、班级、教师或课节"), {
-      target: { value: historical!.title }
+      target: { value: historicalTitle }
     });
 
     await waitFor(() =>
       expect(screen.getByRole("tab", { name: /^全部/ })).toHaveAttribute("aria-selected", "true")
     );
-    expect(screen.getByRole("heading", { level: 3, name: historical!.title })).toBeInTheDocument();
+    const historicalCard = cardFor(historical!.id);
+    expect(
+      within(historicalCard as HTMLElement).getByRole("heading", { level: 3, name: historicalTitle })
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "清除搜索" }));
     await waitFor(() =>
       expect(screen.getByRole("tab", { name: /即将开始/ })).toHaveAttribute("aria-selected", "true")
     );
-    expect(screen.queryByRole("heading", { level: 3, name: historical!.title })).not.toBeInTheDocument();
+    expect(cardFor(historical!.id)).toBeNull();
   });
 
-  it("opens a read-only detail for historical sessions", async () => {
+  it("focuses a historical session from a direct schedule link", async () => {
     platform.setCurrentUser("operator-ray");
     refreshAppStore();
-    window.location.hash = "#/operator/scheduling";
-    render(<App />);
-
     const now = Date.now();
     const historical = platform.getState().sessions.find(
       (session) => session.source === "single" && (session.status === "cancelled" || new Date(session.endAt).getTime() < now)
     );
     expect(historical).toBeDefined();
+    window.location.hash = `#/operator/scheduling?focus=${historical!.id}`;
+    render(<App />);
 
-    fireEvent.click(await screen.findByRole("tab", { name: /历史课程/ }));
-    const card = await screen.findByRole("heading", { level: 3, name: historical!.title });
-    fireEvent.click(within(card.closest(".operator-session-card") as HTMLElement).getByRole("button", { name: "详情" }));
-
-    const dialog = await screen.findByRole("dialog", { name: "课次详情" });
-    const titleInput = within(dialog).getByPlaceholderText("留空则按课节名自动生成") as HTMLInputElement;
-    expect(titleInput.value).toBe(historical!.title);
-    expect(titleInput).toHaveAttribute("readonly");
-    expect(within(dialog).getByRole("combobox", { name: /^班级/ })).toBeDisabled();
-    expect(within(dialog).getByLabelText("开始时间")).toHaveAttribute("readonly");
-    expect(within(dialog).getByLabelText("教室（选填）")).toHaveAttribute("readonly");
-    expect(within(dialog).getByText("历史课次仅供查看，不可修改。")).toBeInTheDocument();
-    expect(within(dialog).queryByRole("button", { name: "保存修改" })).not.toBeInTheDocument();
-    expect(within(dialog).queryByRole("button", { name: "确认排课" })).not.toBeInTheDocument();
-
-    fireEvent.click(within(dialog).getByRole("button", { name: "关闭详情" }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "课次详情" })).not.toBeInTheDocument());
+    await waitFor(() => {
+      expect(document.querySelector(`[data-session-id="${historical!.id}"]`)).toHaveClass("is-focused");
+    });
+    expect(screen.getByRole("tab", { name: /历史课程/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("dialog", { name: "课次详情" })).not.toBeInTheDocument();
+    await waitFor(() => expect(window.location.hash).toBe("#/operator/scheduling"));
   });
 
-  it("opens the scheduling reschedule form from a session detail page", async () => {
+  it("focuses a series session in the unified schedule list", async () => {
+    platform.setCurrentUser("operator-ray");
+    refreshAppStore();
+    const now = Date.now();
+    const seriesSession = platform.getState().sessions.find(
+      (session) =>
+        session.source === "series" &&
+        session.status !== "cancelled" &&
+        new Date(session.endAt).getTime() >= now
+    );
+    expect(seriesSession).toBeDefined();
+    window.location.hash = `#/operator/scheduling?focus=${seriesSession!.id}`;
+    render(<App />);
+
+    await waitFor(() => {
+      expect(document.querySelector(`[data-session-id="${seriesSession!.id}"]`)).toHaveClass("is-focused");
+    });
+    const seriesCard = cardFor(seriesSession!.id);
+    expect(
+      within(seriesCard as HTMLElement).getByRole("heading", {
+        level: 3,
+        name: sessionTitleFor(platform.getState().lessons, seriesSession!)
+      })
+    ).toBeInTheDocument();
+    await waitFor(() => expect(window.location.hash).toBe("#/operator/scheduling"));
+  });
+
+  it("redirects legacy session links to the focused schedule card", async () => {
     platform.setCurrentUser("operator-ray");
     refreshAppStore();
     const session = platform.getState().sessions.find(
@@ -392,9 +494,11 @@ describe("operator scheduling", () => {
     window.location.hash = `#/operator/sessions/${session!.id}`;
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "编辑课次" }));
-    expect(await screen.findByRole("dialog", { name: "编辑课次" })).toBeInTheDocument();
-    expect((screen.getByPlaceholderText("留空则按课节名自动生成") as HTMLInputElement).value).toBe(session!.title);
+    await waitFor(() => expect(window.location.hash).toBe("#/operator/scheduling"));
+    await waitFor(() => {
+      expect(document.querySelector(`[data-session-id="${session!.id}"]`)).toHaveClass("is-focused");
+    });
+    expect(screen.queryByRole("dialog", { name: "课次详情" })).not.toBeInTheDocument();
   });
 
   it("opens the session roster in a modal and previews a class roster sync", async () => {
@@ -438,11 +542,12 @@ describe("operator scheduling", () => {
     render(<App />);
 
     await screen.findByRole("tab", { name: /即将开始/ });
-    const card = screen.getByRole("heading", { level: 3, name: target!.title }).closest(".operator-session-card");
+    const card = cardFor(target!.id);
     expect(card).not.toBeNull();
     fireEvent.click(within(card as HTMLElement).getByRole("button", { name: "名单" }));
 
-    const dialog = await screen.findByRole("dialog", { name: new RegExp(`课次名单 · ${target!.title}`) });
+    const targetTitle = sessionTitleFor(before.lessons, target!);
+    const dialog = await screen.findByRole("dialog", { name: `课次名单 · ${targetTitle}` });
     expect(within(dialog).queryByText(newMember!.name)).not.toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: /同步名单/ }));
     expect(within(dialog).getByText("新增 1 人")).toBeInTheDocument();

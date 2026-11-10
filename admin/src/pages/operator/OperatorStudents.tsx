@@ -10,6 +10,7 @@ import { platform } from "../../lib/platform";
 import { usePlatformStore } from "../../store/usePlatformStore";
 
 type StudentManagementTab = "students" | "classes";
+const ALL_SCHOOLS_ID = "all";
 const gradeCategories: GradeCategory[] = ["interaction", "homework", "exam"];
 const gradeLabels: Record<GradeCategory, string> = { interaction: "互动练习", homework: "作业", exam: "考试" };
 
@@ -27,18 +28,28 @@ export function OperatorStudents({
   const activeSchools = useMemo(() => rawState.schools.filter((item) => item.status === "active"), [rawState.schools]);
   const [selectedSchoolId, setSelectedSchoolId] = useState(() => {
     const requestedSchoolId = searchParams.get("school") ?? "";
+    if (requestedSchoolId === ALL_SCHOOLS_ID) return ALL_SCHOOLS_ID;
     return activeSchools.some((school) => school.id === requestedSchoolId)
       ? requestedSchoolId
       : activeSchools[0]?.id ?? "";
   });
   const schoolId = academic ? getAcademicSchoolId(rawState, operator) : selectedSchoolId;
-  const state = useMemo(() => workspaceState(rawState, schoolId), [rawState, schoolId]);
+  const isAllSchools = !academic && schoolId === ALL_SCHOOLS_ID;
+  const state = useMemo(
+    () => workspaceState(rawState, isAllSchools ? "" : schoolId),
+    [isAllSchools, rawState, schoolId]
+  );
   const selectedSchool = rawState.schools.find((item) => item.id === schoolId) ?? null;
-  const [tab, setTab] = useState<StudentManagementTab>(() => searchParams.get("tab") === "students" ? "students" : "classes");
+  const [tab, setTab] = useState<StudentManagementTab>(() => {
+    if (searchParams.get("tab") === "students") return "students";
+    if (searchParams.get("tab") === "classes") return "classes";
+    return "classes";
+  });
   const [query, setQuery] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [classEditor, setClassEditor] = useState<ClassGroup | "new" | null>(null);
-  const [memberClassId, setMemberClassId] = useState("");
+  const [memberClass, setMemberClass] = useState<ClassGroup | null>(null);
+  const [studentSchoolId, setStudentSchoolId] = useState("");
   const [form, setForm] = useState({
     name: "",
     phone: "",
@@ -46,9 +57,17 @@ export function OperatorStudents({
     locale: "id-ID",
     program: "Mandarin Explorer",
     level: "初级 1",
+    className: academic ? "" : "待分班",
     learningGoal: "",
     preferredTeacherId: ""
   });
+  const effectiveStudentSchoolId = isAllSchools ? studentSchoolId : schoolId;
+  const studentSchool = rawState.schools.find((item) => item.id === effectiveStudentSchoolId) ?? null;
+  const studentTeachers = useMemo(() => {
+    if (!effectiveStudentSchoolId) return [];
+    return workspaceState(rawState, effectiveStudentSchoolId).users.filter((item) => item.role === "teacher");
+  }, [effectiveStudentSchoolId, rawState]);
+  const academicClasses = state.classes.filter((item) => item.status === "active");
 
   function activeClassNames(studentId: string) {
     const names = new Set<string>();
@@ -56,6 +75,16 @@ export function OperatorStudents({
       if (enrollment.studentId !== studentId || enrollment.status !== "active") return;
       const classItem = state.classes.find((item) => item.id === enrollment.classId);
       if (classItem?.status === "active" && classItem.name !== "待分班") names.add(classItem.name);
+    });
+    return [...names];
+  }
+
+  function schoolNamesForStudent(studentId: string) {
+    const names = new Set<string>();
+    state.schoolMemberships.forEach((membership) => {
+      if (membership.userId !== studentId || membership.role !== "student" || membership.status !== "active") return;
+      const school = rawState.schools.find((item) => item.id === membership.schoolId);
+      if (school) names.add(school.name);
     });
     return [...names];
   }
@@ -68,15 +97,30 @@ export function OperatorStudents({
   });
 
   function createStudent() {
-    if (!schoolId) return;
+    if (!effectiveStudentSchoolId) return;
     const result = run(
-      () => platform.createStudent({ ...form, schoolId, actorId: operator.id }),
+      () => platform.createStudent({ ...form, schoolId: effectiveStudentSchoolId, actorId: operator.id }),
       "学生档案已创建"
     );
     if (result.ok) {
       setCreateOpen(false);
       setForm((value) => ({ ...value, name: "", phone: "", learningGoal: "" }));
     }
+  }
+
+  function openCreateStudent() {
+    setStudentSchoolId(isAllSchools ? "" : schoolId);
+    setForm((value) => ({
+      ...value,
+      preferredTeacherId: "",
+      className: academic ? academicClasses[0]?.name ?? "" : "待分班"
+    }));
+    setCreateOpen(true);
+  }
+
+  function changeStudentSchool(nextSchoolId: string) {
+    setStudentSchoolId(nextSchoolId);
+    setForm((value) => ({ ...value, preferredTeacherId: "" }));
   }
 
   return (
@@ -87,9 +131,9 @@ export function OperatorStudents({
         </Button>
       )}
       <PageHeader
-        eyebrow="Student operations"
-        title={academic ? "本校班级与学生" : "班级与学生"}
-        description={academic ? "以班级为单位维护本校名单与教师；需要查找个人时切换到学生档案。班级名称和成员变化不会拆分历史成绩。" : "以班级为单位维护名单与教师；需要查找个人时切换到学生档案。学校决定班级范围和可选教师，历史成绩不会因班级调整而拆分。"}
+        eyebrow={academic ? "Class & student directory" : "Student operations"}
+        title="班级与学生"
+        description={academic ? "先按班级查看本校名单与教师，再进入学生查看完整档案、预约与成绩记录；学校教务只能新增学生，不能修改或删除。" : "以班级为单位维护名单与教师；需要查找个人时切换学生档案。学校决定班级范围和可选教师，历史成绩不会因班级调整而拆分。"}
       />
 
       <Card className="student-management-toolbar">
@@ -102,7 +146,7 @@ export function OperatorStudents({
             </span>
           ) : (
             <Select
-              aria-label="当前学校"
+              aria-label="学校范围"
               className="student-management-school-select"
               value={schoolId}
               onChange={(event) => {
@@ -114,6 +158,7 @@ export function OperatorStudents({
                 setSearchParams(nextParams, { replace: true });
               }}
             >
+              <option value={ALL_SCHOOLS_ID}>全部学校</option>
               {activeSchools.map((school) => <option key={school.id} value={school.id}>{school.name}</option>)}
             </Select>
           )}
@@ -130,8 +175,8 @@ export function OperatorStudents({
             setSearchParams(nextParams, { replace: true });
           }}
           items={[
-            { value: "classes", label: "班级与学生" },
-            { value: "students", label: "学生档案" }
+            { value: "classes" as const, label: academic ? "班级" : "班级与学生" },
+            { value: "students" as const, label: academic ? "学生" : "学生档案" }
           ]}
         />
         <div className="student-management-toolbar-actions">
@@ -140,12 +185,16 @@ export function OperatorStudents({
             <TextInput
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder={tab === "classes" ? "搜索班级名称" : "搜索姓名、等级、班级或标签"}
+              placeholder={tab === "classes"
+                ? (isAllSchools ? "搜索全部学校的班级名称" : "搜索班级名称")
+                : (isAllSchools ? "搜索全部学校的学生" : "搜索姓名、等级、班级或标签")}
               disabled={!schoolId}
             />
           </div>
-          {tab === "students"
-            ? <Button disabled={!schoolId} onClick={() => setCreateOpen(true)}><UserRoundPlus size={17} /> 新建学生</Button>
+          {academic
+            ? <Button disabled={!schoolId || academicClasses.length === 0} onClick={openCreateStudent}><UserRoundPlus size={17} /> 新建学生</Button>
+            : tab === "students"
+            ? <Button disabled={!schoolId} onClick={openCreateStudent}><UserRoundPlus size={17} /> 新建学生</Button>
             : <Button disabled={!schoolId} onClick={() => setClassEditor("new")}><Plus size={17} /> 新建班级</Button>}
         </div>
       </Card>
@@ -159,6 +208,12 @@ export function OperatorStudents({
                   const user = getUser(state, profile.userId);
                   if (!user) return null;
                   const classNames = activeClassNames(profile.userId);
+                  const schoolNames = schoolNamesForStudent(profile.userId);
+                  const classSummary = classNames.length > 0
+                    ? classNames.join("、")
+                    : isAllSchools && schoolNames.length > 0
+                      ? `${schoolNames.join("、")} · 待分班`
+                      : "待分班";
                   const visibleTags = profile.tags.slice(0, 2);
                   const hiddenTagCount = profile.tags.length - visibleTags.length;
                   return (
@@ -169,7 +224,7 @@ export function OperatorStudents({
                           <strong>{user.name}</strong>
                         </div>
                       </div>
-                      <div className="student-roster-class"><UsersRound size={14} /> {classNames.length ? classNames.join("、") : "待分班"}</div>
+                      <div className="student-roster-class"><UsersRound size={14} /> {classSummary}</div>
                       <div className="student-roster-tags">
                         {visibleTags.map((tag) => <span key={tag}>{tag}</span>)}
                         {hiddenTagCount > 0 && <span>+{hiddenTagCount}</span>}
@@ -192,8 +247,9 @@ export function OperatorStudents({
         <ClassManagement
           query={query}
           onEdit={setClassEditor}
-          onMembers={setMemberClassId}
+          onMembers={setMemberClass}
           schoolId={schoolId}
+          readOnly={academic}
         />
       )}
 
@@ -202,23 +258,40 @@ export function OperatorStudents({
         title="新建学生档案"
         onClose={() => setCreateOpen(false)}
         width="720px"
-        footer={<div className="modal-footer-split"><small>使用虚构演示信息，不接入真实身份系统</small><div><Button variant="ghost" onClick={() => setCreateOpen(false)}>取消</Button><Button onClick={createStudent}>创建档案</Button></div></div>}
+        footer={<div className="modal-footer-split"><small>{academic ? "学校教务只能把学生加入本校已有班级" : "使用虚构演示信息，不接入真实身份系统"}</small><div><Button variant="ghost" onClick={() => setCreateOpen(false)}>取消</Button><Button disabled={!effectiveStudentSchoolId || !form.name.trim() || (academic && !form.className)} onClick={createStudent}>创建档案</Button></div></div>}
       >
         <div className="editor-grid">
           <Field label="学生姓名" className="field-span-2"><TextInput value={form.name} onChange={(event) => setForm((value) => ({ ...value, name: event.target.value }))} placeholder="例如：Nadia" /></Field>
-          <Field label="所属学校"><TextInput value={selectedSchool?.name ?? "未选择学校"} readOnly /></Field>
+          <Field label="所属学校">
+            {isAllSchools ? (
+              <Select aria-label="所属学校" value={studentSchoolId} onChange={(event) => changeStudentSchool(event.target.value)}>
+                <option value="">请选择学校</option>
+                {activeSchools.map((school) => <option key={school.id} value={school.id}>{school.name}</option>)}
+              </Select>
+            ) : (
+              <TextInput value={studentSchool?.name ?? "未选择学校"} readOnly />
+            )}
+          </Field>
           <Field label="联系方式"><TextInput value={form.phone} onChange={(event) => setForm((value) => ({ ...value, phone: event.target.value }))} placeholder="+62 ..." /></Field>
+          {academic && (
+            <Field label="主班级">
+              <Select aria-label="主班级" value={form.className} onChange={(event) => setForm((value) => ({ ...value, className: event.target.value }))}>
+                <option value="">请选择本校班级</option>
+                {academicClasses.map((classItem) => <option key={classItem.id} value={classItem.name}>{classItem.name}</option>)}
+              </Select>
+            </Field>
+          )}
           <Field label="界面语言"><Select value={form.locale} onChange={(event) => setForm((value) => ({ ...value, locale: event.target.value }))}><option value="id-ID">Bahasa Indonesia</option><option value="zh-CN">简体中文</option></Select></Field>
           <Field label="时区"><Select value={form.timeZone} onChange={(event) => setForm((value) => ({ ...value, timeZone: event.target.value }))}><option value="Asia/Jakarta">GMT+7 雅加达</option><option value="Asia/Shanghai">GMT+8 上海</option><option value="Asia/Singapore">GMT+8 新加坡</option></Select></Field>
           <Field label="课程项目"><TextInput value={form.program} onChange={(event) => setForm((value) => ({ ...value, program: event.target.value }))} /></Field>
           <Field label="当前等级"><TextInput value={form.level} onChange={(event) => setForm((value) => ({ ...value, level: event.target.value }))} /></Field>
-          <Field label="偏好教师"><Select value={form.preferredTeacherId} onChange={(event) => setForm((value) => ({ ...value, preferredTeacherId: event.target.value }))}><option value="">暂不指定</option>{state.users.filter((item) => item.role === "teacher").filter((teacher) => state.schoolMemberships.some((membership) => membership.schoolId === schoolId && membership.userId === teacher.id && membership.role === "teacher" && membership.status === "active")).map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name}</option>)}</Select></Field>
+          <Field label="偏好教师"><Select disabled={!effectiveStudentSchoolId} value={form.preferredTeacherId} onChange={(event) => setForm((value) => ({ ...value, preferredTeacherId: event.target.value }))}><option value="">暂不指定</option>{studentTeachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name}</option>)}</Select></Field>
           <Field label="学习目标" className="field-span-2"><textarea className="input textarea" value={form.learningGoal} onChange={(event) => setForm((value) => ({ ...value, learningGoal: event.target.value }))} /></Field>
         </div>
       </Modal>
 
-      <ClassEditorModal classItem={classEditor} onClose={() => setClassEditor(null)} academic={academic} schoolId={schoolId} />
-      {memberClassId && <ClassMembersModal classId={memberClassId} onClose={() => setMemberClassId("")} schoolId={schoolId} />}
+      {!academic && <ClassEditorModal classItem={classEditor} onClose={() => setClassEditor(null)} academic={academic} schoolId={schoolId} />}
+      {memberClass && <ClassMembersModal classId={memberClass.id} onClose={() => setMemberClass(null)} schoolId={memberClass.schoolId || (isAllSchools ? "" : schoolId)} readOnly={academic} />}
     </>
   );
 }
@@ -227,16 +300,31 @@ function ClassManagement({
   query,
   onEdit,
   onMembers,
-  schoolId
+  schoolId,
+  readOnly = false
 }: {
   query: string;
   onEdit: (classItem: ClassGroup) => void;
-  onMembers: (classId: string) => void;
+  onMembers: (classItem: ClassGroup) => void;
   schoolId: string;
+  readOnly?: boolean;
 }) {
   const { state: rawState } = usePlatformStore();
-  const state = useMemo(() => workspaceState(rawState, schoolId), [rawState, schoolId]);
-  const classes = state.classes.filter((item) => !query || item.name.toLowerCase().includes(query.toLowerCase()));
+  const isAllSchools = schoolId === ALL_SCHOOLS_ID;
+  const state = useMemo(
+    () => workspaceState(rawState, isAllSchools ? "" : schoolId),
+    [isAllSchools, rawState, schoolId]
+  );
+  const schoolById = useMemo(() => new Map(rawState.schools.map((school) => [school.id, school])), [rawState.schools]);
+  const classes = useMemo(() => {
+    const filtered = state.classes.filter((item) => !query || item.name.toLowerCase().includes(query.toLowerCase()));
+    if (!isAllSchools) return filtered;
+    return [...filtered].sort((a, b) => {
+      const schoolA = schoolById.get(a.schoolId)?.name ?? "";
+      const schoolB = schoolById.get(b.schoolId)?.name ?? "";
+      return schoolA.localeCompare(schoolB, "zh-CN") || a.name.localeCompare(b.name, "zh-CN");
+    });
+  }, [isAllSchools, query, schoolById, state.classes]);
   return (
     <>
       {classes.length > 0 && (
@@ -245,6 +333,8 @@ function ClassManagement({
             {classes.map((classItem) => {
               const teacher = getUser(state, classItem.teacherId);
               const members = state.classEnrollments.filter((item) => item.classId === classItem.id && item.status === "active");
+              const school = schoolById.get(classItem.schoolId);
+              const schoolName = school?.name ?? "";
               return (
                 <article className="student-roster-row class-roster-row" key={classItem.id}>
                   <div className="class-roster-identity">
@@ -252,20 +342,23 @@ function ClassManagement({
                     {classItem.status === "archived" && <Badge tone="neutral">已归档</Badge>}
                   </div>
                   <div className="class-roster-meta">
+                    {isAllSchools && <span className="class-roster-school">{schoolName || "未归属学校"}</span>}
                     <span>{teacher?.name ?? "未分配教师"}</span>
                     <span>{members.length > 0 ? `${members.length} 名学生` : "尚无学生"}</span>
                   </div>
                   <div className="class-roster-actions">
-                    <Button variant="secondary" onClick={() => onMembers(classItem.id)}><UsersRound size={15} /> 管理学生</Button>
-                    <Button
-                      size="icon"
-                      variant="secondary"
-                      aria-label={`编辑班级：${classItem.name}`}
-                      title="编辑班级"
-                      onClick={() => onEdit(classItem)}
-                    >
-                      <Pencil size={16} />
-                    </Button>
+                    <Button variant="secondary" onClick={() => onMembers(classItem)}><UsersRound size={15} /> {readOnly ? "查看名单" : "管理学生"}</Button>
+                    {!readOnly && (
+                      <Button
+                        size="icon"
+                        variant="secondary"
+                        aria-label={`编辑班级：${classItem.name}`}
+                        title="编辑班级"
+                        onClick={() => onEdit(classItem)}
+                      >
+                        <Pencil size={16} />
+                      </Button>
+                    )}
                   </div>
                 </article>
               );
@@ -291,17 +384,28 @@ function ClassEditorModal({
 }) {
   const { state: rawState, run } = usePlatformStore();
   const actor = currentUser(rawState);
-  const state = useMemo(() => workspaceState(rawState, schoolId), [rawState, schoolId]);
-  const currentSchool = rawState.schools.find((item) => item.id === schoolId);
-  const teachers = state.users.filter((item) => item.role === "teacher");
+  const activeSchools = useMemo(() => rawState.schools.filter((item) => item.status === "active"), [rawState.schools]);
+  const pageSchoolId = schoolId === ALL_SCHOOLS_ID ? "" : schoolId;
+  const editingClass = classItem && classItem !== "new" ? classItem : null;
+  const [formSchoolId, setFormSchoolId] = useState("");
   const [name, setName] = useState("");
   const [teacherId, setTeacherId] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const effectiveSchoolId = editingClass ? editingClass.schoolId || pageSchoolId : formSchoolId;
+  const state = useMemo(() => workspaceState(rawState, effectiveSchoolId), [effectiveSchoolId, rawState]);
+  const teachers = effectiveSchoolId ? state.users.filter((item) => item.role === "teacher") : [];
+  const currentSchool = rawState.schools.find((item) => item.id === effectiveSchoolId);
+  const canChooseSchool = !academic && !editingClass && schoolId === ALL_SCHOOLS_ID;
 
   useEffect(() => {
     if (!classItem) return;
+    const nextSchoolId = classItem === "new" ? pageSchoolId : classItem.schoolId || pageSchoolId;
+    const nextTeachers = nextSchoolId
+      ? workspaceState(rawState, nextSchoolId).users.filter((item) => item.role === "teacher")
+      : [];
     setName(classItem === "new" ? "" : classItem.name);
-    setTeacherId(classItem === "new" ? teachers[0]?.id ?? "" : classItem.teacherId);
+    setFormSchoolId(nextSchoolId);
+    setTeacherId(classItem === "new" ? nextTeachers[0]?.id ?? "" : classItem.teacherId);
     setConfirmDelete(false);
     // 只在打开或切换班级时重置。
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -315,10 +419,24 @@ function ClassEditorModal({
     || state.assessments.some((item) => item.classId === currentClass.id)
     || state.students.some((item) => item.primaryClassId === currentClass.id)
   );
+  function changeSchool(nextSchoolId: string) {
+    setFormSchoolId(nextSchoolId);
+    const nextTeachers = nextSchoolId
+      ? workspaceState(rawState, nextSchoolId).users.filter((item) => item.role === "teacher")
+      : [];
+    setTeacherId(nextTeachers[0]?.id ?? "");
+  }
   function save() {
-    const result = currentClass === "new"
-      ? run(() => platform.createClass({ name, teacherId, schoolId: schoolId || undefined, actorId: actor.id }), "班级已创建")
-      : run(() => platform.updateClass({ classId: currentClass.id, patch: { name, teacherId }, actorId: actor.id, reason: academic ? "学校教务维护班级" : "教学管理维护班级" }), "班级已更新");
+    if (currentClass === "new") {
+      if (!effectiveSchoolId) return;
+      const result = run(
+        () => platform.createClass({ name, teacherId, schoolId: effectiveSchoolId, actorId: actor.id }),
+        "班级已创建"
+      );
+      if (result.ok) onClose();
+      return;
+    }
+    const result = run(() => platform.updateClass({ classId: currentClass.id, patch: { name, teacherId }, actorId: actor.id, reason: academic ? "学校教务维护班级" : "教学管理维护班级" }), "班级已更新");
     if (result.ok) onClose();
   }
 
@@ -369,12 +487,26 @@ function ClassEditorModal({
         open
         title={classItem === "new" ? "新建班级" : "编辑班级"}
         onClose={onClose}
-        footer={<div className="modal-footer-split">{lifecycleAction}<div><Button variant="ghost" onClick={onClose}>取消</Button><Button disabled={!name.trim() || !teacherId || !schoolId} onClick={save}>保存班级</Button></div></div>}
+        footer={<div className="modal-footer-split">{lifecycleAction}<div><Button variant="ghost" onClick={onClose}>取消</Button><Button disabled={!name.trim() || !teacherId || !effectiveSchoolId} onClick={save}>保存班级</Button></div></div>}
       >
         <div className="editor-grid">
-          <Field label="班级名称" className="field-span-2"><TextInput value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：印尼圣心学校7年级A班" /></Field>
-          <Field label="所属学校"><TextInput value={currentSchool?.name ?? "未选择学校"} readOnly /></Field>
-          <Field label="主教师"><Select value={teacherId} onChange={(event) => setTeacherId(event.target.value)}>{teachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name}</option>)}</Select></Field>
+          <Field label="班级名称" className="field-span-2"><TextInput value={name} onChange={(event) => setName(event.target.value)} placeholder={currentSchool ? `例如：${currentSchool.name}7年级A班` : "例如：印尼圣心学校7年级A班"} /></Field>
+          <Field label="所属学校">
+            {canChooseSchool ? (
+              <Select aria-label="所属学校" value={formSchoolId} onChange={(event) => changeSchool(event.target.value)}>
+                <option value="">请选择学校</option>
+                {activeSchools.map((school) => <option key={school.id} value={school.id}>{school.name}</option>)}
+              </Select>
+            ) : (
+              <TextInput value={currentSchool?.name ?? "未选择学校"} readOnly />
+            )}
+          </Field>
+          <Field label="教师">
+            <Select disabled={!effectiveSchoolId} value={teacherId} onChange={(event) => setTeacherId(event.target.value)}>
+              {(!effectiveSchoolId || teachers.length === 0) && <option value="">{effectiveSchoolId ? "该校暂无可选教师" : "请先选择学校"}</option>}
+              {teachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name}</option>)}
+            </Select>
+          </Field>
         </div>
       </Modal>
       <Modal
@@ -391,7 +523,7 @@ function ClassEditorModal({
   );
 }
 
-function ClassMembersModal({ classId, onClose, schoolId }: { classId: string; onClose: () => void; schoolId: string }) {
+function ClassMembersModal({ classId, onClose, schoolId, readOnly = false }: { classId: string; onClose: () => void; schoolId: string; readOnly?: boolean }) {
   const { state: rawState, run } = usePlatformStore();
   const actor = currentUser(rawState);
   const state = useMemo(() => workspaceState(rawState, schoolId), [rawState, schoolId]);
@@ -493,7 +625,12 @@ function ClassMembersModal({ classId, onClose, schoolId }: { classId: string; on
       title={view === "roster" ? `学生名单 · ${classItem?.name ?? "班级"}` : `添加学生 · ${classItem?.name ?? "班级"}`}
       onClose={onClose}
       width="860px"
-      footer={view === "roster" ? (
+      footer={readOnly ? (
+        <div className="modal-footer-split modal-footer-end">
+          <small>只读查看，不能调整班级成员。</small>
+          <div><Button variant="secondary" onClick={onClose}>关闭</Button></div>
+        </div>
+      ) : view === "roster" ? (
         <div className="modal-footer-split modal-footer-end">
           <div><Button variant="ghost" onClick={onClose}>完成</Button></div>
         </div>
@@ -519,10 +656,10 @@ function ClassMembersModal({ classId, onClose, schoolId }: { classId: string; on
               <Search size={16} />
               <TextInput value={memberQuery} onChange={(event) => setMemberQuery(event.target.value)} placeholder="搜索本班姓名、手机号或 App 账号" />
             </div>
-            <Button variant="secondary" onClick={openAddView}><UserRoundPlus size={17} /> 添加学生</Button>
+            {!readOnly && <Button variant="secondary" onClick={openAddView}><UserRoundPlus size={17} /> 添加学生</Button>}
           </div>
 
-          {pendingRemoval && (
+          {!readOnly && pendingRemoval && (
             <div className="class-remove-confirm">
               <div>
                 <strong>将 {pendingRemoval.user.name} 移出本班？</strong>
@@ -536,11 +673,12 @@ function ClassMembersModal({ classId, onClose, schoolId }: { classId: string; on
           )}
 
           {visibleMembers.length > 0 && (
-            <div className="class-roster-table">
+            <div className={`class-roster-table${readOnly ? " is-readonly" : ""}`}>
               <div className="class-roster-table-head">
                 <span>姓名 / 等级</span>
                 <span>手机号</span>
                 <span>App 绑定</span>
+                {!readOnly && <span>操作</span>}
               </div>
               {visibleMembers.map(({ user, profile }) => {
                 const account = studentAppAccount(user);
@@ -554,16 +692,18 @@ function ClassMembersModal({ classId, onClose, schoolId }: { classId: string; on
                     <div className="class-roster-binding">
                       {account ? <Badge tone="mint">已绑定</Badge> : <Badge tone="danger">未绑定</Badge>}
                     </div>
-                    <div className="class-roster-row-action">
-                      <Button size="sm" variant="ghost" onClick={() => setConfirmRemoveId(user.id)}>移出</Button>
-                    </div>
+                    {!readOnly && (
+                      <div className="class-roster-row-action">
+                        <Button size="sm" variant="ghost" onClick={() => setConfirmRemoveId(user.id)}>移出</Button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
             </div>
           )}
 
-          {members.length === 0 && <EmptyState title="这个班还没有学生" action={<Button onClick={openAddView}>添加学生</Button>} />}
+          {members.length === 0 && <EmptyState title="这个班还没有学生" action={readOnly ? undefined : <Button onClick={openAddView}>添加学生</Button>} />}
           {members.length > 0 && visibleMembers.length === 0 && <EmptyState title="本班没有匹配的学生" />}
         </>
       ) : (

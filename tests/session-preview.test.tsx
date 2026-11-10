@@ -18,7 +18,7 @@ async function openSchedule(userId: string) {
 }
 
 function previewButtonOf(sessionTitle: string) {
-  const card = screen.getByText(sessionTitle).closest(".class-session-card") as HTMLElement;
+  const card = screen.getByText(sessionTitle).closest(".student-session-card") as HTMLElement;
   return within(card).getByRole("button", { name: "课前预习" });
 }
 
@@ -73,11 +73,11 @@ describe("schedule preview modal", () => {
     expect(window.location.hash).toContain("phase=preview");
   });
 
-  it("opens review materials and interactions in a modal, with a separate course detail button", async () => {
+  it("opens review materials and interactions in a modal, then links to the class performance page", async () => {
     await openSchedule("student-raymond");
     fireEvent.click(screen.getByRole("tab", { name: /历史课程/ }));
 
-    const reviewCard = (await screen.findByText("问候复习课")).closest(".class-session-card") as HTMLElement;
+    const reviewCard = (await screen.findByText("问候复习课")).closest(".student-session-card") as HTMLElement;
     fireEvent.click(within(reviewCard).getByRole("button", { name: "课后复习" }));
 
     const dialog = await screen.findByRole("dialog", { name: "嗨！你好！ · 课后复习" });
@@ -91,9 +91,9 @@ describe("schedule preview modal", () => {
 
     fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
 
-    // 详情按钮仍然跳转课节页
-    fireEvent.click(within(reviewCard).getByRole("button", { name: "查看课程详情" }));
-    await waitFor(() => expect(window.location.hash).toContain("/student/lesson/"));
-    expect(window.location.hash).toContain("phase=review");
+    // 历史课程右侧直接进入这节课的课堂表现
+    fireEvent.click(within(reviewCard).getByRole("button", { name: "查看课堂表现" }));
+    await waitFor(() => expect(window.location.hash).toContain("/student/results"));
+    expect(await screen.findByRole("heading", { name: "课堂表现" })).toBeInTheDocument();
   });
 });

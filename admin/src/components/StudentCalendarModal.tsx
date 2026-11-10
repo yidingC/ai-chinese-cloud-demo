@@ -1,4 +1,5 @@
 import { PlayCircle } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { ClassSession, PlatformState } from "../domain/types";
 import { Button } from "./ui";
 import { CalendarModal } from "./CalendarModal";
@@ -17,6 +18,7 @@ export function StudentCalendarModal({
   sessions: ClassSession[];
   onOpenCourseware: (session: ClassSession) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <CalendarModal
       open={open}
@@ -26,7 +28,7 @@ export function StudentCalendarModal({
       detailSubtitle={(session) => state.users.find((user) => user.id === session.teacherId)?.name ?? ""}
       renderAction={(session) => (
         <Button size="sm" variant="soft" onClick={() => onOpenCourseware(session)}>
-          <PlayCircle size={15} /> 课前预习
+          <PlayCircle size={15} /> {t("student.schedule.previewFallback")}
         </Button>
       )}
     />

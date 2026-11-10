@@ -155,6 +155,25 @@ describe("grade analytics", () => {
     });
   });
 
+  it("keeps student class labels inside the requested school", () => {
+    const state = platform.getState();
+    const schoolId = "school-sacred-heart";
+    const schoolClassIds = new Set(
+      state.classes.filter((item) => item.schoolId === schoolId).map((item) => item.id)
+    );
+    const range = relativeGradeRange("Asia/Jakarta", 90);
+    const analytics = buildGradeAnalytics(state, range, { schoolId });
+
+    expect(analytics.students.length).toBeGreaterThan(0);
+    analytics.students.forEach((student) => {
+      expect(student.classIds.length).toBeGreaterThan(0);
+      student.classIds.forEach((classId) => expect(schoolClassIds.has(classId)).toBe(true));
+    });
+    analytics.records.forEach((record) => {
+      if (record.classId) expect(schoolClassIds.has(record.classId)).toBe(true);
+    });
+  });
+
   it("aggregates class trend and radar with equal student weighting", () => {
     const range = relativeGradeRange("Asia/Jakarta", 30);
     const analytics = buildGradeAnalytics(platform.getState(), range, { teacherId: "teacher-lina" });

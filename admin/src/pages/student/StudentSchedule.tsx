@@ -1,41 +1,130 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { CalendarCheck, CalendarDays, History, Hourglass, PlayCircle } from "lucide-react";
-import { platform } from "../../lib/platform";
+import { BarChart3, CalendarDays, GraduationCap, MapPin, PlayCircle, RotateCcw, Search, UsersRound } from "lucide-react";
 import { usePlatformStore } from "../../store/usePlatformStore";
 import {
   currentUser,
+  getBookedCount,
   getLesson,
   getSession,
   getStudentPendingReviewBookings,
-  getStudentWaitlist,
+  getUser,
   isSessionPendingReview,
   lessonContent,
   studentMetrics
 } from "../../lib/domain";
-import type { ClassSession, Phase } from "../../domain/types";
-import { relativeTime } from "../../lib/format";
-import { Badge, Button, Card, EmptyState, PageHeader, Tabs } from "../../components/ui";
-import { ClassSessionCard } from "../../components/ClassSessionCard";
-import { PmNote } from "../../components/PmNote";
+import type { ClassSession, Phase, PlatformState } from "../../domain/types";
+import { formatRange, timeZoneLabel } from "../../lib/format";
+import { Avatar, Badge, Button, Card, EmptyState, PageHeader, Tabs, TextInput } from "../../components/ui";
 import { StudentCalendarModal } from "../../components/StudentCalendarModal";
 import { SessionContentModal } from "../../components/SessionContentModal";
+import "./studentSchedule.css";
 
-type ScheduleTab = "upcoming" | "history" | "waitlist";
+type ScheduleTab = "upcoming" | "history" | "all";
+
+function shortDateLabel(session: ClassSession, state: PlatformState) {
+  return new Intl.DateTimeFormat(state.ui.language, {
+    timeZone: state.ui.timeZone,
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short"
+  }).format(new Date(session.startAt));
+}
+
+function sessionTiming(session: ClassSession, pendingReview: boolean) {
+  if (pendingReview) return { labelKey: "student.schedule.statusPending", tone: "orange" as const, history: false };
+  const now = Date.now();
+  const start = new Date(session.startAt).getTime();
+  const end = new Date(session.endAt).getTime();
+  if (now < start) return { labelKey: "student.schedule.statusNotStarted", tone: "blue" as const, history: false };
+  if (now <= end) return { labelKey: "student.schedule.statusLive", tone: "mint" as const, history: false };
+  return { labelKey: "student.schedule.statusEnded", tone: "neutral" as const, history: true };
+}
+
+function StudentSessionCard({
+  state,
+  session,
+  pendingReview,
+  onPreview,
+  onReview,
+  onPerformance
+}: {
+  state: PlatformState;
+  session: ClassSession;
+  pendingReview: boolean;
+  onPreview: () => void;
+  onReview: () => void;
+  onPerformance: () => void;
+}) {
+  const { t } = useTranslation();
+  const lesson = getLesson(state, session.lessonId);
+  const teacher = getUser(state, session.teacherId);
+  const timing = sessionTiming(session, pendingReview);
+  const booked = getBookedCount(state, session.id);
+
+  return (
+    <article className={`student-session-card ${timing.history ? "is-history" : "is-upcoming"}`}>
+      <span className="student-session-accent" style={{ background: lesson?.color ?? "var(--purple)" }} />
+
+      <div className="student-session-time">
+        <span className="student-session-tz">{timeZoneLabel(state.ui.timeZone)}</span>
+        <strong>{shortDateLabel(session, state)}</strong>
+        <b>{formatRange(session.startAt, session.endAt, state.ui.timeZone, state.ui.language)}</b>
+      </div>
+
+      <div className="student-session-main">
+        <h3>{session.title}</h3>
+        <p className="student-session-topic">{lesson?.subtitle || lesson?.title || t("student.schedule.contentFallback")}</p>
+        <div className="student-session-meta">
+          <span><GraduationCap size={15} /> {session.className}</span>
+          <span><UsersRound size={15} /> {t("student.schedule.enrolled", { count: booked })}</span>
+          <span><MapPin size={15} /> {session.roomLabel}</span>
+        </div>
+        {teacher && (
+          <div className="student-session-teacher">
+            <Avatar label={teacher.avatar} size="sm" tone="orange" />
+            <span>
+              <strong>{teacher.name}</strong>
+              <small>{t("student.schedule.teacher")}</small>
+            </span>
+          </div>
+        )}
+      </div>
+
+      <div className="student-session-side">
+        <Badge tone={timing.tone}>{t(timing.labelKey)}</Badge>
+        <div className="student-session-actions">
+          {pendingReview ? (
+            <span className="student-session-hint">{t("student.schedule.pendingHint")}</span>
+          ) : timing.history ? (
+            <>
+              <Button variant="soft" onClick={onReview}>
+                <RotateCcw size={16} /> {t("student.review")}
+              </Button>
+              <Button variant="secondary" onClick={onPerformance}>
+                <BarChart3 size={16} /> {t("student.schedule.viewPerformance")}
+              </Button>
+            </>
+          ) : (
+            <Button onClick={onPreview}>
+              <PlayCircle size={16} /> {t("student.prep")}
+            </Button>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
 
 export function StudentSchedule() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { state, run } = usePlatformStore();
+  const state = usePlatformStore((store) => store.state);
   const user = currentUser(state);
   const metrics = studentMetrics(state, user.id);
-  const waitlist = getStudentWaitlist(state, user.id);
-  const pendingReviewSessions = getStudentPendingReviewBookings(state, user.id)
-    .map((booking) => getSession(state, booking.sessionId))
-    .filter((session): session is ClassSession => Boolean(session && session.status === "published" && new Date(session.endAt).getTime() >= Date.now()));
-  const upcomingCount = metrics.upcoming.length + pendingReviewSessions.length;
   const [tab, setTab] = useState<ScheduleTab>("upcoming");
+  const [query, setQuery] = useState("");
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [preview, setPreview] = useState<{
     phase: Phase;
@@ -47,6 +136,43 @@ export function StudentSchedule() {
     lessonId: string;
     sessionId: string;
   } | null>(null);
+
+  const pendingReviewSessions = useMemo(
+    () =>
+      getStudentPendingReviewBookings(state, user.id)
+        .map((booking) => getSession(state, booking.sessionId))
+        .filter((session): session is ClassSession =>
+          Boolean(session && session.status === "published" && new Date(session.endAt).getTime() >= Date.now())
+        ),
+    [state, user.id]
+  );
+
+  const upcomingSessions = useMemo(
+    () => [...pendingReviewSessions, ...metrics.upcoming].filter((session) => session.status !== "cancelled"),
+    [metrics.upcoming, pendingReviewSessions]
+  );
+  const historySessions = useMemo(
+    () => metrics.past.filter((session) => session.status !== "cancelled"),
+    [metrics.past]
+  );
+  const allSessions = useMemo(() => {
+    const map = new Map<string, ClassSession>();
+    [...upcomingSessions, ...historySessions].forEach((session) => map.set(session.id, session));
+    return [...map.values()];
+  }, [historySessions, upcomingSessions]);
+
+  const visibleSessions = useMemo(() => {
+    const source = tab === "upcoming" ? upcomingSessions : tab === "history" ? historySessions : allSessions;
+    const keyword = query.trim().toLowerCase();
+    if (!keyword) return source;
+    return source.filter((session) => {
+      const lesson = getLesson(state, session.lessonId);
+      const teacher = getUser(state, session.teacherId);
+      return `${session.title} ${session.className} ${session.roomLabel} ${lesson?.title ?? ""} ${lesson?.subtitle ?? ""} ${teacher?.name ?? ""}`
+        .toLowerCase()
+        .includes(keyword);
+    });
+  }, [allSessions, historySessions, query, state, tab, upcomingSessions]);
 
   /** 打开课前 / 课后内容弹窗：课件 + 该阶段材料 + 该阶段互动都在同一个弹窗里。 */
   function openSessionContent(session: ClassSession, phase: Phase) {
@@ -65,19 +191,11 @@ export function StudentSchedule() {
       title: lesson?.title ?? session.title,
       url: coursewareUrl,
       materialId: coursewareMaterial?.id,
-      badgeLabel: "互动课件",
-      note: "支持词汇点读、选择题和句子排序，可直接在播放器里操作。",
+      badgeLabel: t("student.schedule.coursewareBadge"),
+      note: t("student.schedule.coursewareNote"),
       lessonId: session.lessonId,
       sessionId: session.id
     });
-  }
-
-  function cancel(sessionId: string) {
-    const booking = state.bookings.find((item) => item.studentId === user.id && item.sessionId === sessionId && item.status === "booked");
-    if (!booking) return;
-    if (window.confirm("确定取消这套课程预约吗？如果属于系列班，将整套取消。")) {
-      run(() => platform.cancelBooking({ bookingId: booking.id, actorId: user.id }), "预约已取消");
-    }
   }
 
   return (
@@ -85,141 +203,58 @@ export function StudentSchedule() {
       <PageHeader
         eyebrow="My learning calendar"
         title={t("student.scheduleTitle")}
+        description={t("student.schedule.description")}
       />
 
-      <PmNote block kind="口径" note="即将开始包含正式预约和待审核报名；候补数量只统计仍在等待的课程。">
-        <Card className="schedule-summary-strip">
-        <div>
-          <span className="quick-ring purple-ring"><CalendarCheck size={19} /></span>
-          <strong>{upcomingCount}</strong>
-          <small>即将开始</small>
+      <Card className="student-schedule-toolbar">
+        <div className="student-schedule-search">
+          <Search size={17} />
+          <TextInput
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={t("student.schedule.searchPlaceholder")}
+            aria-label={t("student.schedule.searchAria")}
+          />
         </div>
-        <div>
-          <span className="quick-ring mint-ring"><History size={19} /></span>
-          <strong>{metrics.past.length}</strong>
-          <small>历史课程</small>
-        </div>
-        <div>
-          <span className="quick-ring orange-ring"><Hourglass size={19} /></span>
-          <strong>{waitlist.length}</strong>
-          <small>候补中的课程</small>
-        </div>
-        <button className="calendar-tile" onClick={() => setCalendarOpen(true)}>
-          <span className="quick-ring blue-ring"><CalendarDays size={19} /></span>
-          <strong>课程日历</strong>
-          <small>看过去与未来哪天有课</small>
-        </button>
-        </Card>
-      </PmNote>
+        <Button variant="secondary" onClick={() => setCalendarOpen(true)}>
+          <CalendarDays size={17} /> {t("student.schedule.calendar")}
+        </Button>
+      </Card>
 
-      <div className="section-heading-row">
+      <div className="student-schedule-tabbar">
         <Tabs
           value={tab}
           onChange={setTab}
           items={[
-            { value: "upcoming", label: "即将开始", count: upcomingCount },
-            { value: "history", label: "历史课程", count: metrics.past.length },
-            { value: "waitlist", label: "候补队列", count: waitlist.length }
+            { value: "upcoming", label: t("student.schedule.tabUpcoming"), count: upcomingSessions.length },
+            { value: "history", label: t("student.schedule.tabHistory"), count: historySessions.length },
+            { value: "all", label: t("student.schedule.tabAll"), count: allSessions.length }
           ]}
         />
       </div>
 
-      {tab === "upcoming" && (
-        <PmNote block kind="流程" note="「课前预习」在一个弹窗里查看课件、课前材料与互动；取消会释放名额，系列班则整套取消。需审核班次审核前显示「待审核」，不占用班级名额。">
-          <div className="session-list">
-          {[...pendingReviewSessions, ...metrics.upcoming].map((session) => {
-            const pendingReview = isSessionPendingReview(state, user.id, session.id);
-            return (
-              <ClassSessionCard
-                key={session.id}
-                state={state}
-                session={session}
-                showSeats={false}
-                showSpecialty={false}
-                actions={pendingReview ? (
-                  <>
-                    <Badge tone="orange">{t("student.pendingReview")}</Badge>
-                    <span className="action-caption">{t("student.pendingReviewHint")}</span>
-                  </>
-                ) : (
-                  <>
-                    <Button onClick={() => openSessionContent(session, "preview")}>
-                      <PlayCircle size={17} /> {t("student.prep")}
-                    </Button>
-                    <Button variant="ghost" onClick={() => cancel(session.id)}>
-                      {t("common.cancel")}
-                    </Button>
-                  </>
-                )}
-              />
-            );
-          })}
-          {upcomingCount === 0 && <EmptyState title="暂无即将开始的课程" description="去约课中心看看新的大班课时间。" action={<Button onClick={() => navigate("/student/book")}>去约课</Button>} />}
-          </div>
-        </PmNote>
-      )}
-
-      {tab === "history" && (
-        <PmNote block kind="流程" note="点击复习进入该课次的课后内容。">
-          <div className="session-list">
-          {metrics.past.map((session) => (
-            <ClassSessionCard
+      <div className="student-session-list">
+        {visibleSessions.map((session) => {
+          const pendingReview = isSessionPendingReview(state, user.id, session.id);
+          return (
+            <StudentSessionCard
               key={session.id}
               state={state}
               session={session}
-              showSeats={false}
-              showSpecialty={false}
-              actions={
-                <>
-                  <Button variant="soft" onClick={() => openSessionContent(session, "review")}>
-                    {t("student.review")}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() => navigate(`/student/lesson/${session.lessonId}?sessionId=${session.id}&phase=review`)}
-                  >
-                    {t("student.courseDetail")}
-                  </Button>
-                </>
-              }
+              pendingReview={pendingReview}
+              onPreview={() => openSessionContent(session, "preview")}
+              onReview={() => openSessionContent(session, "review")}
+              onPerformance={() => navigate(`/student/results?sessionId=${session.id}`)}
             />
-          ))}
-          {metrics.past.length === 0 && <EmptyState title="还没有历史课程" />}
-          </div>
-        </PmNote>
-      )}
+          );
+        })}
+      </div>
 
-      {tab === "waitlist" && (
-        <PmNote block kind="规则" note="候补按加入时间排序；释放名额后自动转正并发送通知。">
-          <div className="waitlist-grid">
-          {waitlist.map((entry) => {
-            const session = entry.sessionId ? getSession(state, entry.sessionId) : undefined;
-            const series = entry.seriesId ? state.series.find((item) => item.id === entry.seriesId) : undefined;
-            return (
-              <Card className="waitlist-card" key={entry.id}>
-                <div className="waitlist-status">
-                  <Hourglass size={21} />
-                  <Badge tone="blue">候补中</Badge>
-                </div>
-                <h3>{series?.title ?? session?.title}</h3>
-                <p>
-                  {entry.sessionIds.length > 0
-                    ? `整套 ${entry.sessionIds.length} 次课程已锁定候补顺序。`
-                    : "出现空位后，系统会按排队顺序自动为你转正。"}
-                </p>
-                <div className="waitlist-meta">
-                  <span>加入时间：{relativeTime(entry.createdAt, state.ui.language)}</span>
-                  <span>当前排位：第 {state.waitlist.filter((item) => item.status === "waiting" && ((item.sessionId && item.sessionId === entry.sessionId) || item.seriesId === entry.seriesId)).findIndex((item) => item.id === entry.id) + 1} 位</span>
-                </div>
-                <Button variant="secondary" onClick={() => run(() => platform.leaveWaitlist({ waitlistId: entry.id }), "已退出候补")}>
-                  退出候补
-                </Button>
-              </Card>
-            );
-          })}
-          {waitlist.length === 0 && <EmptyState title="暂无候补课程" description="满员班次可以在约课中心加入候补。" />}
-          </div>
-        </PmNote>
+      {visibleSessions.length === 0 && (
+        <EmptyState
+          title={query ? t("student.schedule.emptyMatchTitle") : tab === "history" ? t("student.schedule.emptyHistoryTitle") : t("student.schedule.emptyTitle")}
+          description={query ? t("student.schedule.emptyMatchDescription") : t("student.schedule.emptyDescription")}
+        />
       )}
 
       <StudentCalendarModal
@@ -229,7 +264,7 @@ export function StudentSchedule() {
         sessions={metrics.sessions}
         onOpenCourseware={(session) => {
           setCalendarOpen(false);
-          openSessionContent(session, "preview");
+          openSessionContent(session, new Date(session.endAt).getTime() < Date.now() ? "review" : "preview");
         }}
       />
 
@@ -237,7 +272,7 @@ export function StudentSchedule() {
         open={Boolean(preview)}
         state={state}
         phase={preview?.phase ?? "preview"}
-        title={preview?.title ?? "课前预习"}
+        title={preview?.title ?? t("student.schedule.previewFallback")}
         lessonId={preview?.lessonId ?? ""}
         sessionId={preview?.sessionId ?? ""}
         coursewareUrl={preview?.url}
@@ -247,7 +282,7 @@ export function StudentSchedule() {
         onClose={() => setPreview(null)}
         onOpenLesson={() => {
           if (!preview) return;
-          const target = `/student/lesson/${preview.lessonId}?sessionId=${preview.sessionId}&phase=preview`;
+          const target = `/student/lesson/${preview.lessonId}?sessionId=${preview.sessionId}&phase=${preview.phase}`;
           setPreview(null);
           navigate(target);
         }}

@@ -43,4 +43,15 @@ describe("teacher live classroom demo", () => {
     const state = platform.getState();
     expect(buildTeacherLiveDemo(state, "missing-teacher", undefined, Date.now())).toBeNull();
   });
+
+  it("keeps a blank classroom overview when the session has no live content", () => {
+    const state = platform.getState();
+    const demo = buildTeacherLiveDemo(state, "teacher-berenice", "club-session-1", Date.now());
+
+    expect(demo).not.toBeNull();
+    expect(demo?.session.id).toBe("club-session-1");
+    expect(demo?.presentCount).toBe(0);
+    expect(demo?.interactions).toHaveLength(0);
+    expect(demo?.activityFeed).toHaveLength(0);
+  });
 });

@@ -6,7 +6,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { Badge, Button, Card, PageHeader } from "../../components/ui";
-import { getBookedCount } from "../../lib/domain";
+import { getBookedCount, getLesson } from "../../lib/domain";
 import { formatDate, formatTime } from "../../lib/format";
 import { usePlatformStore } from "../../store/usePlatformStore";
 
@@ -43,13 +43,13 @@ export function OperatorDashboard() {
             </div>
             <div className="operator-upcoming-list">
               {upcomingSessions.slice(0, 5).map((session) => (
-                <button key={session.id} onClick={() => navigate(`/operator/sessions/${session.id}`)}>
+                <button key={session.id} onClick={() => navigate(`/operator/scheduling?focus=${session.id}`)}>
                   <span className="operator-upcoming-time">
                     <strong>{formatDate(session.startAt, state.ui.timeZone, state.ui.language)}</strong>
                     <small>{formatTime(session.startAt, state.ui.timeZone, state.ui.language)}</small>
                   </span>
                   <span className="operator-upcoming-copy">
-                    <strong>{session.title}</strong>
+                    <strong>{getLesson(state, session.lessonId)?.title ?? session.title}</strong>
                     <small>{session.className} · {state.users.find((person) => person.id === session.teacherId)?.name ?? "未分配教师"}</small>
                   </span>
                   <span className="operator-upcoming-side">
@@ -83,10 +83,10 @@ export function OperatorDashboard() {
                 const live = new Date(session.startAt).getTime() <= now && new Date(session.endAt).getTime() >= now;
                 const ended = new Date(session.endAt).getTime() < now;
                 return (
-                  <button key={session.id} className={live ? "is-live" : ended ? "is-ended" : ""} onClick={() => navigate(`/operator/sessions/${session.id}`)}>
+                  <button key={session.id} className={live ? "is-live" : ended ? "is-ended" : ""} onClick={() => navigate(`/operator/scheduling?focus=${session.id}`)}>
                     <span className="operator-today-time">{formatTime(session.startAt, state.ui.timeZone, state.ui.language)}</span>
                     <span className="operator-today-copy">
-                      <strong>{session.title}</strong>
+                      <strong>{getLesson(state, session.lessonId)?.title ?? session.title}</strong>
                       <small>{session.className} · {state.users.find((person) => person.id === session.teacherId)?.name ?? "未分配教师"}</small>
                     </span>
                     <Badge tone={live ? "orange" : ended ? "neutral" : "blue"}>{live ? "进行中" : ended ? "已结束" : "待开始"}</Badge>

@@ -1,0 +1,472 @@
+.student-home-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.student-home-title {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.student-home-title-greeting {
+  display: block;
+}
+
+.student-home-title-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 5px;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: clamp(15px, 1.65vw, 23px);
+  font-weight: 750;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
+}
+
+.student-home-title-progress strong {
+  color: var(--orange);
+  font-size: 1.38em;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.student-home-main-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(330px, 0.85fr);
+  align-items: stretch;
+  gap: 18px;
+}
+
+.student-home-hero {
+  height: 100%;
+  min-height: 360px;
+  grid-template-columns: minmax(0, 1fr) minmax(190px, 0.58fr);
+  margin-bottom: 0;
+  padding: 28px;
+  border-radius: 28px;
+}
+
+.student-home-hero .student-hero-copy h2 {
+  margin: 10px 0 5px;
+  font-size: clamp(24px, 2.25vw, 32px);
+  line-height: 1.15;
+}
+
+.student-home-hero-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.student-home-hero-topic {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.student-home-session-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 14px;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.student-home-session-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.student-home-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.student-home-hero-actions .button {
+  margin-top: 0;
+}
+
+.student-home-hero .student-panda-scene {
+  min-height: 270px;
+}
+
+.student-home-hero .scene-panda {
+  bottom: -18px;
+  font-size: 112px;
+}
+
+.student-home-hero .scene-book {
+  right: 10px;
+  bottom: 16px;
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
+.student-home-panel {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 20px;
+  border-radius: 20px;
+}
+
+.student-home-panel .card-heading {
+  gap: 12px;
+}
+
+.student-home-panel .card-heading h2 {
+  margin-top: 3px;
+  font-size: 19px;
+}
+
+.student-home-panel .card-heading p {
+  line-height: 1.45;
+}
+
+.student-home-task-counts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.student-home-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.student-home-task {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 10px;
+  color: var(--ink);
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fcfbff;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.student-home-task.is-review {
+  background: #fffbf7;
+}
+
+.student-home-task:hover {
+  border-color: #d9d2ff;
+  background: #fff;
+  box-shadow: var(--shadow-xs);
+}
+
+.student-home-task-icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  color: var(--purple);
+  border-radius: 11px;
+  background: var(--purple-soft);
+}
+
+.student-home-task.is-review .student-home-task-icon {
+  color: var(--orange);
+  background: var(--orange-soft);
+}
+
+.student-home-task-copy {
+  min-width: 0;
+}
+
+.student-home-task-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.student-home-task-title .badge {
+  flex: 0 0 auto;
+}
+
+.student-home-task-title strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.student-home-task-copy > small {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.student-home-task-chevron {
+  color: var(--muted-light);
+  transition: color 140ms ease, transform 140ms ease;
+}
+
+.student-home-task:hover .student-home-task-chevron {
+  color: var(--purple);
+  transform: translateX(2px);
+}
+
+.student-home-empty {
+  display: flex;
+  min-height: 170px;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 11px;
+  padding: 20px;
+  color: var(--muted);
+  text-align: left;
+}
+
+.student-home-empty > span {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--mint);
+  border-radius: 14px;
+  background: var(--mint-soft);
+}
+
+.student-home-empty strong {
+  max-width: 250px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.55;
+}
+
+.student-home-lower-grid {
+  display: grid;
+  grid-template-columns: minmax(310px, 0.8fr) minmax(0, 1.5fr);
+  align-items: stretch;
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.student-home-recent {
+  display: flex;
+  min-height: 190px;
+  flex: 1;
+  flex-direction: column;
+  gap: 13px;
+  margin-top: 15px;
+}
+
+.student-home-recent-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 11px;
+}
+
+.student-home-recent-icon {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--purple);
+  border-radius: 15px;
+  background: var(--purple-soft);
+}
+
+.student-home-recent-title strong,
+.student-home-recent-title small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.student-home-recent-title strong {
+  font-size: 15px;
+}
+
+.student-home-recent-title small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.student-home-recent-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 14px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.student-home-recent-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.student-home-recent-actions {
+  display: flex;
+  min-height: 40px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.student-home-grade-charts {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  margin-top: 12px;
+}
+
+.student-home-grade-chart {
+  min-width: 0;
+  padding: 10px 18px 2px;
+}
+
+.student-home-grade-chart.is-trend {
+  width: 100%;
+  padding: 10px 14px 2px;
+  border-radius: 22px;
+  background: linear-gradient(180deg, #fbfaff, #fff);
+}
+
+.student-home-chart-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 5px;
+  color: var(--purple);
+}
+
+.student-home-chart-heading span {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.student-home-grade-chart .grade-trend-legend {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.student-home-grade-chart .grade-trend svg {
+  min-height: 0;
+}
+
+@media (max-width: 1240px) {
+  .student-home-main-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .student-home-hero {
+    min-height: 300px;
+  }
+}
+
+@media (max-width: 1380px) {
+  .student-home-lower-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .student-home-recent-panel .student-home-recent {
+    display: grid;
+    min-height: 0;
+    grid-template-columns: minmax(220px, 1.2fr) minmax(260px, 1fr) auto;
+    align-items: center;
+    gap: 18px;
+  }
+
+  .student-home-recent-panel .student-home-recent-actions {
+    justify-content: flex-end;
+    margin-top: 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .student-home-head-actions {
+    justify-content: flex-start;
+  }
+
+  .student-home-main-grid,
+  .student-home-lower-grid {
+    gap: 14px;
+  }
+
+  .student-home-lower-grid {
+    margin-top: 14px;
+  }
+
+  .student-home-hero {
+    min-height: 0;
+    grid-template-columns: 1fr;
+    padding: 22px;
+  }
+
+  .student-home-panel {
+    padding: 18px;
+  }
+
+  .student-home-grade-charts { min-height: 0; }
+
+  .student-home-recent-panel .student-home-recent {
+    display: flex;
+    min-height: 190px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 13px;
+  }
+
+  .student-home-recent-panel .student-home-recent-actions {
+    justify-content: flex-start;
+    margin-top: auto;
+  }
+}
+
+@media (max-width: 480px) {
+  .student-home-head-actions,
+  .student-home-task-counts {
+    justify-content: flex-start;
+  }
+
+  .student-home-recent-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .student-home-recent-actions .button {
+    width: 100%;
+    justify-content: center;
+  }
+}

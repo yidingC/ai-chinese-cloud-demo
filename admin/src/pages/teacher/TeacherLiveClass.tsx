@@ -3,32 +3,27 @@ import { createPortal } from "react-dom";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
-  ArrowRight,
   BarChart3,
-  CalendarClock,
   ChevronLeft,
   ChevronRight,
   BookOpenText,
   Check,
   Clock3,
   Eye,
-  GraduationCap,
   Presentation,
   Layers3,
   Maximize2,
-  Medal,
   Minimize2,
   PauseCircle,
   PlayCircle,
-  Radio,
+  Square,
   Sparkles,
-  Trophy,
-  UsersRound
+  Trophy
 } from "lucide-react";
 import { usePlatformStore } from "../../store/usePlatformStore";
-import { currentUser, getCurrentInteractionVersion } from "../../lib/domain";
+import { currentUser, getCurrentInteractionVersion, getLesson, sessionRuntimeStatus } from "../../lib/domain";
+import { platform } from "../../lib/platform";
 import { formatDateTime, formatRange } from "../../lib/format";
-import { interactionTypeShortLabel } from "../../lib/interactionTypes";
 import type { InteractionItem } from "../../domain/types";
 import {
   buildTeacherLiveDemo,
@@ -36,8 +31,6 @@ import {
   setTeacherDemoMode,
   useTeacherDemoMode,
   type LiveInteractionMetric,
-  type LiveInteractionStatus,
-  type LiveRankingEntry,
   type TeacherLiveDemo
 } from "../../lib/teacherLiveDemo";
 import {
@@ -45,7 +38,7 @@ import {
   type LiveRoundMetric,
   type LiveRoundParticipantRow
 } from "../../lib/teacherLiveRoundDemo";
-import { Avatar, Badge, Button, Card, EmptyState, Modal, PageHeader, ProgressBar, StatCard } from "../../components/ui";
+import { Button, Modal, PageHeader } from "../../components/ui";
 import { InteractionPlayer } from "../../components/InteractionPlayer";
 import { PmNote } from "../../components/PmNote";
 
@@ -108,18 +101,6 @@ function buildCoursewareSlides(snapshot: TeacherLiveDemo) {
   ];
 }
 
-const interactionTone: Record<LiveInteractionStatus, "purple" | "mint" | "orange"> = {
-  completed: "mint",
-  live: "purple",
-  upcoming: "orange"
-};
-
-const interactionLabelTone: Record<LiveInteractionStatus, string> = {
-  completed: "done",
-  live: "active",
-  upcoming: "waiting"
-};
-
 const CONFETTI_COLORS = ["#6552ff", "#33b99c", "#f39549", "#e76ca7", "#54a8ef", "#f6c85f"];
 const DEMO_PERFECT_CELEBRATION_LIMIT = 2;
 const CONFETTI_PIECES = Array.from({ length: 64 }, (_, index) => ({
@@ -136,6 +117,19 @@ const CONFETTI_PIECES = Array.from({ length: 64 }, (_, index) => ({
 type RoundCelebration =
   | { id: number; kind: "perfect"; studentName: string }
   | { id: number; kind: "complete" };
+
+function classFlowMeta(interaction: LiveInteractionMetric, classEnded: boolean, classLive: boolean) {
+  if (!classEnded && !classLive) return { className: "is-upcoming", label: "待开始" };
+  if (interaction.status === "completed") return { className: "is-completed", label: "已完成" };
+  if (classEnded) {
+    return interaction.status === "live"
+      ? { className: "is-incomplete", label: "未完成" }
+      : { className: "is-upcoming", label: "未开始" };
+  }
+  return interaction.status === "live"
+    ? { className: "is-live", label: "进行中" }
+    : { className: "is-upcoming", label: "待开始" };
+}
 
 function RoundCelebrator({ round }: { round?: LiveRoundMetric }) {
   const [celebration, setCelebration] = useState<RoundCelebration | null>(null);
@@ -230,123 +224,6 @@ function RoundCelebrator({ round }: { round?: LiveRoundMetric }) {
       </div>
     </div>,
     document.body
-  );
-}
-
-function RankingRows({ rows, limit }: { rows: LiveRankingEntry[]; limit?: number }) {
-  return (
-    <PmNote block kind="规则" note="没有分数时不显示分数，改为显示完成时间。">
-      <div className="live-ranking-list">
-        {(limit ? rows.slice(0, limit) : rows).map((row, index) => (
-          <div className="live-ranking-row" key={row.studentId}>
-            <span className={`live-ranking-number rank-${index + 1}`}>{index + 1}</span>
-            <Avatar label={row.avatar} size="sm" tone={index === 0 ? "orange" : index === 1 ? "blue" : "purple"} />
-            <div className="live-ranking-name">
-              <strong>{row.name}</strong>
-              <small>{row.completedLabel}</small>
-            </div>
-            <b>{row.score || "--"}</b>
-          </div>
-        ))}
-      </div>
-    </PmNote>
-  );
-}
-
-function InteractionCard({
-  interaction,
-  projected,
-  onProject,
-  onOpen
-}: {
-  interaction: LiveInteractionMetric;
-  projected: boolean;
-  onProject: () => void;
-  onOpen: () => void;
-}) {
-  const completion = interaction.participantCount ? Math.round((interaction.answered / interaction.participantCount) * 100) : 0;
-  return (
-    <article
-      className={`live-interaction-card is-${interaction.status} ${projected ? "is-projected" : ""}`}
-      role="button"
-      tabIndex={0}
-      onClick={onOpen}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onOpen();
-        }
-      }}
-    >
-      <header className="live-interaction-head">
-        <div className="live-interaction-title">
-          <span className={`live-interaction-status status-${interactionLabelTone[interaction.status]}`}>
-            {interaction.status === "live" && <span className="live-pulse-dot" />}
-            {liveInteractionStatusLabel(interaction.status)}
-          </span>
-          <h3>{interaction.title}</h3>
-          {interaction.items[0] && (
-            <div className="live-interaction-type">
-              <Badge tone={interactionTone[interaction.status]}>{interactionTypeShortLabel(interaction.items[0].type)}</Badge>
-            </div>
-          )}
-        </div>
-        <div className="live-interaction-count">
-          <strong>{interaction.answered}</strong>
-          <span>/ {interaction.participantCount} 已答</span>
-        </div>
-      </header>
-
-      <div className="live-interaction-progress">
-        <ProgressBar value={completion} tone={interactionTone[interaction.status]} />
-        <span>{completion}%</span>
-      </div>
-
-      <div className="live-interaction-metrics">
-        <div><strong>{interaction.averageScore || "--"}</strong><small>平均分</small></div>
-        <div><strong>{interaction.correctRate ? `${interaction.correctRate}%` : "--"}</strong><small>正确率</small></div>
-        <div><strong>{interaction.durationLabel}</strong><small>课堂进度</small></div>
-      </div>
-
-      {interaction.status !== "upcoming" ? (
-        <div className="live-interaction-ranking">
-          <div className="live-interaction-section-label"><Trophy size={14} /> 当前排名</div>
-          <RankingRows rows={interaction.ranking} limit={3} />
-        </div>
-      ) : (
-        <div className="live-interaction-waiting">
-          <Clock3 size={16} />
-          <span>待开启</span>
-        </div>
-      )}
-
-      <PmNote block kind="流程" note="投影只把原题放大展示；进入直播间可切换本轮题目、实时数据和学生逐题结果。">
-        <footer className="live-interaction-actions">
-          <Button
-            size="sm"
-            variant={projected ? "soft" : "secondary"}
-            onClick={(event) => {
-              event.stopPropagation();
-              onProject();
-            }}
-            disabled={interaction.status === "upcoming"}
-          >
-            {projected ? <Radio size={15} /> : <PlayCircle size={15} />}
-            {projected ? "正在投影" : "投影这道题"}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={(event) => {
-              event.stopPropagation();
-              onOpen();
-            }}
-          >
-            <Eye size={15} /> 查看本轮数据
-          </Button>
-        </footer>
-      </PmNote>
-    </article>
   );
 }
 
@@ -539,15 +416,14 @@ export function TeacherLiveClass({ initialLiveRoomOpen = false }: { initialLiveR
   const { sessionId = "" } = useParams();
   const navigate = useNavigate();
   const state = usePlatformStore((store) => store.state);
+  const run = usePlatformStore((store) => store.run);
   const user = currentUser(state);
   const [demoMode] = useTeacherDemoMode();
-  const [projectedSetId, setProjectedSetId] = useState("");
-  const [projectionSetId, setProjectionSetId] = useState("");
   const [liveRoomOpen, setLiveRoomOpen] = useState(initialLiveRoomOpen);
   const [liveRoomTab, setLiveRoomTab] = useState(initialLiveRoomOpen ? "" : "courseware");
   const [liveRoomItemIndex, setLiveRoomItemIndex] = useState(0);
   const [coursewareSlideIndex, setCoursewareSlideIndex] = useState(0);
-  const [liveRoomFullscreen, setLiveRoomFullscreen] = useState(false);
+  const [liveRoomFullscreen, setLiveRoomFullscreen] = useState(initialLiveRoomOpen);
 
   const snapshot = useMemo(
     () => buildTeacherLiveDemo(state, user.id, sessionId),
@@ -559,7 +435,6 @@ export function TeacherLiveClass({ initialLiveRoomOpen = false }: { initialLiveR
   useEffect(() => {
     if (!snapshot) return;
     const active = snapshot.interactions.find((interaction) => interaction.status === "live") ?? snapshot.interactions[0];
-    setProjectedSetId((current) => current || active?.id || "");
     setLiveRoomTab((current) => current || active?.id || "courseware");
   }, [snapshot]);
 
@@ -569,32 +444,65 @@ export function TeacherLiveClass({ initialLiveRoomOpen = false }: { initialLiveR
   }, [liveRoomOpen, liveRoomTab, coursewareSlides.length, snapshot]);
 
   if (!snapshot) {
-    return <EmptyState title="没有可演示的课堂" description="当前老师没有可用的课堂数据，请先切换到有课演示。" action={<Button onClick={() => navigate("/teacher")}>返回教师首页</Button>} />;
+    const session = state.sessions.find((item) => item.id === sessionId);
+    const lesson = session ? getLesson(state, session.lessonId) : undefined;
+    return (
+      <>
+        <PageHeader
+          eyebrow="Live classroom"
+          title={lesson?.title ?? session?.title ?? "进入课堂"}
+          description={session
+            ? `${session.className} · ${lesson?.subtitle ?? ""} · ${formatDateTime(session.startAt, state.ui.timeZone, state.ui.language)} · ${session.roomLabel}`
+            : "没有找到这节课。"}
+          actions={
+            <Button variant="secondary" onClick={() => navigate("/teacher/schedule")}>
+              <ArrowLeft size={16} /> 返回我的课表
+            </Button>
+          }
+        />
+        <section className="live-class-empty">
+          <span><BookOpenText size={30} /></span>
+          <div>
+            <h2>{session ? "课堂还没有准备好" : "没有找到这节课"}</h2>
+            <p>{session
+              ? "这节课还没有可用的课中课件或互动。先完成备课，再进入课堂。"
+              : "课次可能已被取消或删除，请返回课表重新选择。"}</p>
+          </div>
+          {session && (
+            <Button onClick={() => navigate(`/teacher/session/${session.id}/design`)}>
+              <Layers3 size={16} /> 去备课
+            </Button>
+          )}
+        </section>
+      </>
+    );
   }
 
-  const activeInteraction = snapshot.interactions.find((interaction) => interaction.id === projectedSetId) ?? snapshot.interactions[0];
   const liveRoomInteraction = snapshot.interactions.find((interaction) => interaction.id === liveRoomTab);
   const liveRoomRound = liveRounds.find((round) => round.id === liveRoomInteraction?.id);
-  const projectionInteraction = snapshot.interactions.find((interaction) => interaction.id === projectionSetId);
-  const projectionSet = state.interactionSets.find((set) => set.id === projectionSetId);
-  const projectionItems = projectionSet ? getCurrentInteractionVersion(state, projectionSet)?.items ?? [] : [];
   const liveRoomSet = state.interactionSets.find((set) => set.id === liveRoomTab);
   const liveRoomItems = liveRoomSet ? getCurrentInteractionVersion(state, liveRoomSet)?.items ?? [] : [];
-  const selectedCourseware = snapshot.courseware[0];
-  const interactionProgress = snapshot.interactions.length
-    ? Math.round((snapshot.interactions.filter((interaction) => interaction.status === "completed").length / snapshot.interactions.length) * 100)
+  const runtimeStatus = sessionRuntimeStatus(snapshot.session);
+  const classCancelled = runtimeStatus === "cancelled";
+  const classEnded = runtimeStatus === "ended" || classCancelled;
+  const classLive = runtimeStatus === "live";
+  const statusLabel = classCancelled ? "已取消" : classEnded ? "已结束" : classLive ? "正在进行中" : "待开始";
+  const hasClassStarted = classEnded || classLive;
+  const completedInteractionCount = hasClassStarted
+    ? snapshot.interactions.filter((interaction) => interaction.status === "completed").length
     : 0;
-  const classProgress = Math.round((snapshot.elapsedMinutes / (snapshot.elapsedMinutes + snapshot.remainingMinutes)) * 100);
   const scheduleDate = new Intl.DateTimeFormat(state.ui.language, {
     timeZone: state.ui.timeZone,
     month: "numeric",
     day: "numeric"
   }).format(new Date(snapshot.session.startAt));
   const scheduleLabel = `${scheduleDate} ${formatRange(snapshot.session.startAt, snapshot.session.endAt, state.ui.timeZone, state.ui.language)}`;
+  const liveSessionId = snapshot.session.id;
 
   function openLiveRoom(tab = "courseware") {
     setLiveRoomTab(tab);
     setLiveRoomItemIndex(0);
+    setLiveRoomFullscreen(true);
     setLiveRoomOpen(true);
   }
 
@@ -615,13 +523,13 @@ export function TeacherLiveClass({ initialLiveRoomOpen = false }: { initialLiveR
           eyebrow="Live classroom"
           title="当前没有进行中的课堂"
           description="右上角切换到“有课”，即可演示老师正在上课时的实时课堂视图。"
-          actions={<Button variant="secondary" onClick={() => navigate("/teacher")}><ArrowLeft size={16} /> 返回教师首页</Button>}
+          actions={<Button variant="secondary" onClick={() => navigate("/teacher/schedule")}><ArrowLeft size={16} /> 返回我的课表</Button>}
         />
         <section className="live-class-empty">
           <span><PauseCircle size={30} /></span>
           <div>
             <h2>课堂演示暂时关闭</h2>
-            <p>切换到“有课”后，这里会显示课件、互动进度、学生作答和实时排名。</p>
+            <p>切换到“有课”后，这里会显示课堂控制和直播间入口。</p>
           </div>
           <Button onClick={() => setTeacherDemoMode("live")}><PlayCircle size={16} /> 切换到有课演示</Button>
         </section>
@@ -631,143 +539,165 @@ export function TeacherLiveClass({ initialLiveRoomOpen = false }: { initialLiveR
 
   return (
     <>
-      <PageHeader
-        eyebrow="Live classroom · teacher view"
-        title={snapshot.session.title}
-        description={`${snapshot.session.className} · ${snapshot.lessonTitle} · ${snapshot.lessonSubtitle} · ${snapshot.session.roomLabel}`}
-        actions={
-          <Button variant="secondary" onClick={() => navigate("/teacher")}><ArrowLeft size={16} /> 返回教师首页</Button>
-        }
-      />
+      <div className="live-class-workspace">
+        <div className="live-class-workspace-toolbar">
+          <button type="button" className="live-class-console-back" onClick={() => navigate("/teacher/schedule")}>
+            <ArrowLeft size={14} /> 返回我的课表
+          </button>
+        </div>
 
-      <PmNote block kind="口径" note="课堂进度按已上课时长和课次计划时长计算。">
-        <section className="live-class-banner">
-          <div className="live-class-banner-main">
-            <span className="live-status-pill"><span className="live-pulse-dot" /> 正在进行中</span>
-            <h2>{snapshot.lessonTitle}</h2>
-            <p>{snapshot.lessonDescription}</p>
-            <div className="live-class-meta">
-              <span><GraduationCap size={15} /> {snapshot.session.className}</span>
-              <span><CalendarClock size={15} /> {scheduleLabel}</span>
-              <span><UsersRound size={15} /> {snapshot.presentCount}/{snapshot.participantTotal} 人在线</span>
-              <span><Layers3 size={15} /> {snapshot.interactions.length} 组互动已配置</span>
+        <section className={`live-class-summary-card${classEnded ? " is-ended" : classLive ? " is-live" : ""}`} aria-label="课堂控制">
+          <div className="live-class-summary-identity">
+            <span className="live-class-console-kicker">课堂控制</span>
+            <h1>{snapshot.session.title}</h1>
+            <p>{snapshot.session.className} · {scheduleLabel} · {snapshot.presentCount}/{snapshot.participantTotal} 人在线</p>
+          </div>
+          <div className="live-class-summary-control">
+            <span className={`live-class-console-status${classLive ? " is-live" : classEnded ? " is-ended" : ""}`}>
+              {classLive && <span className="live-pulse-dot" />}
+              {statusLabel}
+            </span>
+            <div className="live-class-console-actions">
+              {classEnded ? (
+                <Button onClick={() => navigate(`/teacher/results?sessionId=${liveSessionId}`)}>
+                  <Eye size={17} /> 查看完整课堂结果
+                </Button>
+              ) : classLive ? (
+                <Button
+                  variant="danger"
+                  className="live-class-console-stop"
+                  onClick={() => run(() => platform.endSession({ sessionId: liveSessionId, actorId: user.id }), "课堂已结束")}
+                >
+                  <Square size={17} /> 结束课堂
+                </Button>
+              ) : (
+                <Button
+                  className="live-class-console-start"
+                  onClick={() => run(() => platform.startSession({ sessionId: liveSessionId, actorId: user.id }), "课堂已开始")}
+                >
+                  <PlayCircle size={17} /> 开始上课
+                </Button>
+              )}
             </div>
           </div>
-          <div className="live-class-banner-timer">
-            <span>课堂进度</span>
-            <strong>{classProgress}%</strong>
-            <ProgressBar value={classProgress} tone="mint" />
-            <small>已上 {snapshot.elapsedMinutes} 分钟 · 还有 {snapshot.remainingMinutes} 分钟</small>
-          </div>
-          <div className="live-class-banner-orbit orbit-one" />
-          <div className="live-class-banner-orbit orbit-two" />
         </section>
-      </PmNote>
 
-      <section className="stat-grid stat-grid-4 live-class-stats">
-        <PmNote block kind="口径" note="在线学生只统计已进入课堂的预约学生，不等同于全量报名人数。">
-          <StatCard label="在线学生" value={`${snapshot.presentCount}/${snapshot.participantTotal}`} icon={<UsersRound size={19} />} tone="blue" />
-        </PmNote>
-        <StatCard label="已完成互动" value={`${snapshot.interactions.filter((item) => item.status === "completed").length}/${snapshot.interactions.length}`} icon={<Check size={19} />} tone="mint" progress={interactionProgress} />
-        <PmNote block kind="口径" note="当前正确率取正在开放的互动，按每位在线学生的有效作答计算。">
-          <StatCard label="当前正确率" value={`${snapshot.interactions.find((item) => item.status === "live")?.correctRate ?? 0}%`} icon={<BarChart3 size={19} />} tone="purple" />
-        </PmNote>
-        <StatCard label="平均分" value={snapshot.interactions.find((item) => item.status === "live")?.averageScore ?? "--"} icon={<Medal size={19} />} tone="orange" />
-      </section>
-
-      <div className="live-class-detail-grid">
-        <div className="live-class-main-column">
-          <Card className="live-courseware-card">
-            <div className="card-heading">
-              <div>
-                <span className="eyebrow">Live room</span>
-                <h2>课堂直播间</h2>
-              </div>
-              <Radio size={20} />
-            </div>
-            {selectedCourseware ? (
-              <div className="live-courseware-body">
-                <div className="live-courseware-icon"><Presentation size={24} /></div>
-                <div className="live-courseware-copy">
-                  <div className="live-courseware-title-row">
-                    <strong>{selectedCourseware.material.title}</strong>
-                  </div>
-                  <p>{selectedCourseware.material.description}</p>
-                  <div className="live-courseware-meta">
-                    <span>{selectedCourseware.material.fileType.toUpperCase()}</span>
-                    <span>第 {selectedCourseware.currentSlide} / {selectedCourseware.totalSlides} 页</span>
-                    <span>最近更新 {selectedCourseware.material.versions.at(-1)?.sizeLabel ?? "课堂版"}</span>
-                  </div>
-                  <ProgressBar value={selectedCourseware.progress} tone="purple" />
+        <div className="live-class-workspace-grid">
+          <section className={`live-class-room-card${classLive ? " is-live" : ""}`} aria-label="课堂直播间">
+              <div className="live-class-block-heading">
+                <div className="live-class-block-title">
+                  <span className="live-class-block-kicker">课堂直播间</span>
+                  <h2>进入直播间</h2>
                 </div>
-                <PmNote kind="流程" note="进入直播间后可切换课件与每轮互动，查看实时答题数据和排名。">
-                  <Button variant="secondary" onClick={() => openLiveRoom("courseware")}><Eye size={16} /> 进入直播间</Button>
-                </PmNote>
+                <span className="live-class-block-meta">
+                  {snapshot.courseware.length} 份课件 · {snapshot.interactions.length} 轮互动
+                </span>
               </div>
+              <div className="live-class-room-preview">
+                <div className="live-class-room-group live-class-room-deck">
+                  <div className="live-class-room-group-head">
+                    <span>导入课件</span>
+                    <small>{snapshot.courseware.length > 0 ? "已同步到直播间" : "尚未导入"}</small>
+                  </div>
+                  {snapshot.courseware.length > 0 ? (
+                    <>
+                      {snapshot.courseware.slice(0, 2).map((item) => {
+                        const isProjecting = classLive && item.status === "projecting";
+                        return (
+                          <div className="live-class-room-material" key={item.material.id}>
+                            <span className="live-class-room-material-icon"><Presentation size={16} /></span>
+                            <div className="live-class-room-material-copy">
+                              <strong>{item.material.title}</strong>
+                              <small>{item.material.fileType.toUpperCase()} · 共 {item.totalSlides} 页 · 当前第 {item.currentSlide} 页</small>
+                            </div>
+                            <span className={`live-class-room-material-status${isProjecting ? " is-projecting" : ""}`}>
+                              {isProjecting ? "投影中" : "已就绪"}
+                            </span>
+                          </div>
+                        );
+                      })}
+                      <div className="live-class-room-slide-strip" aria-label="课件页预览">
+                        {coursewareSlides.slice(1, 4).map((slide, index) => (
+                          <div className="live-class-room-slide-preview" key={slide.id}>
+                            <span>{String(index + 2).padStart(2, "0")}</span>
+                            <strong>{slide.title}</strong>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="live-class-room-empty">尚未导入课堂课件。</p>
+                  )}
+                </div>
+                <div className="live-class-room-group">
+                  <div className="live-class-room-group-head">
+                    <span>互动轮次</span>
+                    <small>预览前 {Math.min(2, snapshot.interactions.length)} 轮</small>
+                  </div>
+                  {snapshot.interactions.length > 0 ? (
+                    <>
+                      <div className="live-class-room-round-list">
+                        {snapshot.interactions.slice(0, 2).map((interaction, index) => (
+                          <div className="live-class-room-round" key={interaction.id}>
+                            <span className="live-class-room-round-index">{index + 1}</span>
+                            <div className="live-class-room-round-copy">
+                              <strong>{interaction.title}</strong>
+                              <small>{interaction.items.length} 道题 · {interaction.durationLabel}</small>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      {snapshot.interactions.length > 2 && (
+                        <span className="live-class-room-more">另有 {snapshot.interactions.length - 2} 轮，进入后按课堂流程依次进行</span>
+                      )}
+                    </>
+                  ) : (
+                    <p className="live-class-room-empty">暂无互动轮次。</p>
+                  )}
+                </div>
+              </div>
+              <Button size="lg" className="live-class-room-enter" onClick={() => openLiveRoom("courseware")}>
+                <Presentation size={18} /> 进入直播间
+              </Button>
+          </section>
+
+          <section className="live-class-flow-card" aria-label="课堂流程">
+            <div className="live-class-block-heading">
+              <div className="live-class-block-title">
+                <span className="live-class-block-kicker">互动轮次</span>
+                <h2>课堂流程</h2>
+              </div>
+              <span className="live-class-block-meta">{completedInteractionCount}/{snapshot.interactions.length} 已完成</span>
+            </div>
+            {snapshot.interactions.length > 0 ? (
+              <ol className="live-class-flow-list">
+                {snapshot.interactions.map((interaction, index) => {
+                  const flow = classFlowMeta(interaction, classEnded, classLive);
+                  return (
+                    <li className={flow.className} key={interaction.id}>
+                      <span className="live-class-flow-index">{index + 1}</span>
+                      <div className="live-class-flow-copy">
+                        <strong>{interaction.title}</strong>
+                        <small>
+                          {flow.label}
+                          {hasClassStarted && interaction.status !== "upcoming" && ` · ${interaction.answered}/${interaction.participantCount} 已作答`}
+                        </small>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ol>
             ) : (
-              <div className="live-courseware-empty"><Presentation size={20} /> 暂无已关联的课中课件</div>
+              <p className="live-class-flow-empty">暂无课中互动。</p>
             )}
-          </Card>
+            <div className="live-class-flow-overview">
+              <div><span>课件</span><strong>{snapshot.courseware.length} 份</strong></div>
+              <div><span>互动</span><strong>{snapshot.interactions.length} 轮</strong></div>
+              <div><span>教室</span><strong>{snapshot.session.roomLabel}</strong></div>
+            </div>
+          </section>
         </div>
-
-        <aside className="live-class-side-column">
-          <Card className="live-feed-card">
-            <div className="card-heading">
-              <div>
-                <span className="eyebrow">Class pulse</span>
-                <h2>课堂动态</h2>
-              </div>
-              <Sparkles size={19} />
-            </div>
-            <div className="live-feed-list">
-              {snapshot.activityFeed.map((item) => (
-                <div className="live-feed-row" key={item.id}>
-                  <span className={`live-feed-dot tone-${item.tone}`} />
-                  <div><strong>{item.label}</strong><small>{item.detail}</small></div>
-                </div>
-              ))}
-            </div>
-          </Card>
-        </aside>
       </div>
-
-      <section className="section-block live-interaction-section">
-        <div className="section-heading-row">
-          <div>
-            <span className="eyebrow">Live interaction board</span>
-            <PmNote kind="规则" note="互动按未开始、进行中、已完成流转；同一时刻只展示一个进行中的主互动。">
-              <h2>实时互动进度</h2>
-            </PmNote>
-          </div>
-        </div>
-        <div className="live-interaction-grid">
-          {snapshot.interactions.map((interaction) => (
-            <InteractionCard
-              key={interaction.id}
-              interaction={interaction}
-              projected={activeInteraction?.id === interaction.id}
-              onProject={() => {
-                setProjectedSetId(interaction.id);
-                setProjectionSetId(interaction.id);
-              }}
-              onOpen={() => openLiveRoom(interaction.id)}
-            />
-          ))}
-        </div>
-      </section>
-
-      <Modal
-        open={Boolean(projectionInteraction)}
-        title={projectionInteraction ? `投影原题 · ${projectionInteraction.title}` : "投影原题"}
-        onClose={() => setProjectionSetId("")}
-        width="980px"
-      >
-        <div className="projection-modal">
-          <div className="projection-player-shell">
-            <InteractionPlayer items={projectionItems} preview projection onClose={() => setProjectionSetId("")} />
-          </div>
-        </div>
-      </Modal>
 
       <Modal
         open={liveRoomOpen}
@@ -782,7 +712,10 @@ export function TeacherLiveClass({ initialLiveRoomOpen = false }: { initialLiveR
               kind="规则"
               note="全对提示按学生逐个出现，文案为「姓名 本轮全对！」。本轮在线参与学生全部完成并闭环时，再播放一次「所有同学全部完成！」。"
             >
-              <span className="live-room-title-meta"><span className="live-pulse-dot" /> 直播中 · {snapshot.session.className}</span>
+              <span className="live-room-title-meta">
+                {classLive && <span className="live-pulse-dot" />}
+                {classEnded ? "课堂已结束" : classLive ? "直播中" : "课堂预览"} · {snapshot.session.className}
+              </span>
             </PmNote>
             <Button variant="secondary" size="sm" onClick={() => setLiveRoomFullscreen((value) => !value)}>
               {liveRoomFullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
@@ -821,13 +754,6 @@ export function TeacherLiveClass({ initialLiveRoomOpen = false }: { initialLiveR
 
           {liveRoomTab === "courseware" ? (
             <div className="courseware-deck">
-              <div className="courseware-deck-toolbar">
-                <span className="courseware-deck-live"><span className="live-pulse-dot" /> 正在投影</span>
-                <div className="courseware-deck-toolbar-actions">
-                  <span>第 {Math.min(coursewareSlideIndex + 1, coursewareSlides.length)} / {coursewareSlides.length} 页</span>
-                </div>
-              </div>
-
               {coursewareSlides[coursewareSlideIndex] && (
                 <article className={`courseware-slide-canvas slide-${coursewareSlides[coursewareSlideIndex].kind}`}>
                   <span className="courseware-slide-kicker">{coursewareSlides[coursewareSlideIndex].eyebrow}</span>

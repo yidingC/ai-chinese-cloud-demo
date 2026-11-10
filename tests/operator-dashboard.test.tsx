@@ -53,4 +53,33 @@ describe("operator dashboard", () => {
     await waitFor(() => expect(window.location.hash).toBe("#/operator/scheduling"));
     expect(await screen.findByRole("dialog", { name: "排课" })).toBeInTheDocument();
   });
+
+  it("jumps from a homepage class to its focused scheduling card", async () => {
+    platform.setCurrentUser("operator-ray");
+    refreshAppStore();
+    window.location.hash = "#/operator";
+    render(<App />);
+
+    await screen.findByRole("heading", { level: 1, name: "运营工作台" });
+    const state = platform.getState();
+    const now = Date.now();
+    const target = state.sessions
+      .filter((session) => session.status === "published" && new Date(session.endAt).getTime() >= now)
+      .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())[0];
+    expect(target).toBeDefined();
+    const lessonTitle = state.lessons.find((lesson) => lesson.id === target!.lessonId)?.title ?? target!.title;
+    const upcomingRow = document.querySelector(".operator-upcoming-list button") as HTMLElement;
+    expect(upcomingRow).not.toBeNull();
+    expect(upcomingRow).toHaveTextContent(lessonTitle);
+    if (lessonTitle !== target!.title) {
+      expect(upcomingRow).not.toHaveTextContent(target!.title);
+    }
+    fireEvent.click(upcomingRow);
+
+    await waitFor(() => {
+      expect(document.querySelector(`[data-session-id="${target!.id}"]`)).toHaveClass("is-focused");
+    });
+    expect(screen.queryByRole("dialog", { name: "课次详情" })).not.toBeInTheDocument();
+    await waitFor(() => expect(window.location.hash).toBe("#/operator/scheduling"));
+  });
 });

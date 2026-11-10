@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { RefreshCw, Search, UserRoundPlus } from "lucide-react";
 import type { PlatformState, SessionRosterEntry } from "../domain/types";
-import { getStudent, getUser, studentAppAccount } from "../lib/domain";
+import { getLesson, getStudent, getUser, studentAppAccount } from "../lib/domain";
 import { platform } from "../lib/platform";
 import { usePlatformStore } from "../store/usePlatformStore";
 import { Avatar, Badge, Button, EmptyState, Modal, TextInput } from "./ui";
@@ -16,15 +16,20 @@ export function OperatorSessionRosterModal({
   state,
   sessionId,
   actorId,
+  readOnly = false,
   onClose
 }: {
   state: PlatformState;
   sessionId: string;
   actorId: string;
+  readOnly?: boolean;
   onClose: () => void;
 }) {
   const { run, showToast } = usePlatformStore();
   const session = state.sessions.find((item) => item.id === sessionId);
+  const sessionTitle = session
+    ? getLesson(state, session.lessonId)?.title ?? session.title
+    : "";
   const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
   const [addQuery, setAddQuery] = useState("");
@@ -147,7 +152,7 @@ export function OperatorSessionRosterModal({
   return (
     <Modal
       open
-      title={`课次名单 · ${session.title}`}
+      title={`课次名单 · ${sessionTitle}`}
       onClose={onClose}
       width="960px"
       footer={
@@ -220,7 +225,14 @@ export function OperatorSessionRosterModal({
             )}
           </div>
 
-          {frozen && (
+          {readOnly && (
+            <div className="session-roster-frozen is-readonly">
+              <strong>只读查看</strong>
+              <span>这里是本次课的应到名单；学校教务不能同步、补录或移出学生。</span>
+            </div>
+          )}
+
+          {!readOnly && frozen && (
             <div className="session-roster-frozen">
               <strong>名单已冻结</strong>
               <span>{session.status === "cancelled" ? "课堂已取消，不能再调整名单。" : "课堂已开始，名单和应到人数保持开课时的快照。"}</span>
@@ -232,14 +244,16 @@ export function OperatorSessionRosterModal({
               <Search size={16} />
               <TextInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索姓名、手机号或 App 账号" />
             </div>
-            <div className="session-roster-toolbar-actions">
-              <Button variant="secondary" onClick={askSyncRoster} disabled={frozen}>
-                <RefreshCw size={16} /> 同步名单
-              </Button>
-              <Button variant="secondary" onClick={() => setAdding(true)} disabled={frozen}>
-                <UserRoundPlus size={16} /> 补录学生
-              </Button>
-            </div>
+            {!readOnly && (
+              <div className="session-roster-toolbar-actions">
+                <Button variant="secondary" onClick={askSyncRoster} disabled={frozen}>
+                  <RefreshCw size={16} /> 同步名单
+                </Button>
+                <Button variant="secondary" onClick={() => setAdding(true)} disabled={frozen}>
+                  <UserRoundPlus size={16} /> 补录学生
+                </Button>
+              </div>
+            )}
           </div>
 
           {syncOpen && (
@@ -266,14 +280,14 @@ export function OperatorSessionRosterModal({
           )}
 
           {rosterRows.length > 0 ? (
-            <div className="session-roster-table">
+            <div className={`session-roster-table${readOnly ? " is-readonly" : ""}`}>
               <div className="session-roster-table-head">
                 <span>学生</span>
                 <span>手机号</span>
                 <span>App 绑定</span>
                 <span>来源</span>
                 <span>状态</span>
-                <span>操作</span>
+                {!readOnly && <span>操作</span>}
               </div>
               {rosterRows.map(({ entry, user, profile, account }) => (
                 <div className="session-roster-row" key={entry.studentId}>
@@ -285,23 +299,25 @@ export function OperatorSessionRosterModal({
                   <div>{account ? <Badge tone="mint">已绑定</Badge> : <Badge tone="neutral">未绑定</Badge>}</div>
                   <div><Badge tone={entry.source === "manual" ? "orange" : "blue"}>{sourceLabels[entry.source]}</Badge></div>
                   <div><Badge tone="mint">应到</Badge></div>
-                  <div className="session-roster-row-action">
-                    {confirmRemoveId === entry.studentId ? (
-                      <>
-                        <Button size="sm" variant="ghost" onClick={() => setConfirmRemoveId("")}>取消</Button>
-                        <Button size="sm" variant="danger" onClick={() => removeStudent(entry.studentId)}>确认移出</Button>
-                      </>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setConfirmRemoveId(entry.studentId)}
-                        disabled={frozen}
-                      >
-                        移出
-                      </Button>
-                    )}
-                  </div>
+                  {!readOnly && (
+                    <div className="session-roster-row-action">
+                      {confirmRemoveId === entry.studentId ? (
+                        <>
+                          <Button size="sm" variant="ghost" onClick={() => setConfirmRemoveId("")}>取消</Button>
+                          <Button size="sm" variant="danger" onClick={() => removeStudent(entry.studentId)}>确认移出</Button>
+                        </>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setConfirmRemoveId(entry.studentId)}
+                          disabled={frozen}
+                        >
+                          移出
+                        </Button>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

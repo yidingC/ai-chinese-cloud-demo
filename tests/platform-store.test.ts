@@ -272,7 +272,7 @@ describe("AI Chinese Cloud platform store", () => {
       tags: ["节日", "文化"]
     });
     expect(lesson.ok).toBe(true);
-    expect(lesson.data?.status).toBe("draft");
+    expect(lesson.data?.status).toBe("published");
 
     const student = platform.createStudent({
       name: "Nadia",
@@ -283,17 +283,13 @@ describe("AI Chinese Cloud platform store", () => {
     expect(platform.getState().students.some((profile) => profile.userId === student.data!.user.id)).toBe(true);
   });
 
-  it("publishes courses only after a lesson is ready and protects referenced courses", () => {
+  it("keeps saved catalog content available and protects referenced courses", () => {
     const subject = platform.createSubject({ name: "生命周期测试" });
     const course = platform.createCourse({ subjectId: subject.data!.id, name: "测试课程" });
     const lesson = platform.createLesson({ folderId: course.data!.id, title: "测试课节" });
 
-    expect(platform.setCourseStatus({ courseId: course.data!.id, status: "published" })).toMatchObject({
-      ok: false,
-      code: "COURSE_EMPTY"
-    });
-    expect(platform.setLessonStatus({ lessonId: lesson.data!.id, status: "published" }).ok).toBe(true);
-    expect(platform.setCourseStatus({ courseId: course.data!.id, status: "published" }).ok).toBe(true);
+    expect(course.data?.status).toBe("published");
+    expect(lesson.data?.status).toBe("published");
     expect(platform.deleteCourse({ courseId: "folder-campus" })).toMatchObject({ ok: false, code: "COURSE_IN_USE" });
     expect(platform.deleteLesson({ lessonId: "lesson-friends" })).toMatchObject({ ok: false, code: "LESSON_IN_USE" });
     expect(platform.deleteSubject({ subjectId: subject.data!.id })).toMatchObject({ ok: false, code: "SUBJECT_IN_USE" });
@@ -301,6 +297,22 @@ describe("AI Chinese Cloud platform store", () => {
     expect(platform.deleteCourse({ courseId: course.data!.id }).ok).toBe(true);
     expect(platform.getState().lessons.some((item) => item.id === lesson.data!.id)).toBe(false);
     expect(platform.deleteSubject({ subjectId: subject.data!.id }).ok).toBe(true);
+  });
+
+  it("reorders lessons by target index in one operation", () => {
+    const before = platform.getState().lessons
+      .filter((lesson) => lesson.folderId === "folder-greetings")
+      .sort((a, b) => a.order - b.order);
+    expect(before).toHaveLength(2);
+
+    const result = platform.reorderLesson({ lessonId: before[0].id, targetIndex: 1 });
+    expect(result.ok).toBe(true);
+
+    const after = platform.getState().lessons
+      .filter((lesson) => lesson.folderId === "folder-greetings")
+      .sort((a, b) => a.order - b.order);
+    expect(after.map((lesson) => lesson.id)).toEqual([before[1].id, before[0].id]);
+    expect(after.map((lesson) => lesson.order)).toEqual([1, 2]);
   });
 
   it("creates school staff accounts directly and rejects duplicate phone numbers", () => {
@@ -758,7 +770,7 @@ describe("AI Chinese Cloud platform store", () => {
     expect(second.data?.bestScore).toBe(90);
   });
 
-  it("keeps a per-session roster snapshot with sync, manual additions and a start-time freeze", () => {
+  it("keeps a per-session roster snapshot with sync, manual additions and a runtime freeze", () => {
     const before = platform.getState();
     const now = Date.now();
     const target = before.sessions.find(
@@ -818,6 +830,38 @@ describe("AI Chinese Cloud platform store", () => {
     const frozen = platform.syncSessionRoster({ sessionId: past!.id, actorId: "operator-ray" });
     expect(frozen.ok).toBe(false);
     expect(frozen.code).toBe("ROSTER_FROZEN");
+  });
+
+  it("persists classroom status only when the teacher starts or ends the class", () => {
+    const target = platform.getState().sessions.find((session) => session.id === "session-preview");
+    expect(target).toBeDefined();
+    expect(target?.liveStartedAt).toBeUndefined();
+    expect(target?.liveEndedAt).toBeUndefined();
+
+    const beforeStart = platform.syncSessionRoster({ sessionId: target!.id, actorId: "operator-ray" });
+    expect(beforeStart.ok).toBe(true);
+
+    const started = platform.startSession({ sessionId: target!.id, actorId: "teacher-berenice" });
+    expect(started.ok).toBe(true);
+    expect(started.data?.liveStartedAt).toBeTruthy();
+    expect(started.data?.liveEndedAt).toBeUndefined();
+
+    const frozenWhileLive = platform.syncSessionRoster({ sessionId: target!.id, actorId: "operator-ray" });
+    expect(frozenWhileLive.ok).toBe(false);
+    expect(frozenWhileLive.code).toBe("ROSTER_FROZEN");
+
+    const ended = platform.endSession({ sessionId: target!.id, actorId: "teacher-berenice" });
+    expect(ended.ok).toBe(true);
+    expect(ended.data?.liveEndedAt).toBeTruthy();
+
+    const persisted = JSON.parse(window.localStorage.getItem(platform.STORE_KEY) ?? "{}");
+    const persistedSession = persisted.sessions?.find((session: { id: string }) => session.id === target!.id);
+    expect(persistedSession?.liveStartedAt).toBeTruthy();
+    expect(persistedSession?.liveEndedAt).toBeTruthy();
+
+    const frozenAfterEnd = platform.syncSessionRoster({ sessionId: target!.id, actorId: "operator-ray" });
+    expect(frozenAfterEnd.ok).toBe(false);
+    expect(frozenAfterEnd.code).toBe("ROSTER_FROZEN");
   });
 
   it("cancels without a required reason and keeps internal reasons out of student notifications", () => {

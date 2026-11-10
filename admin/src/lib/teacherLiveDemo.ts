@@ -221,21 +221,21 @@ export function buildTeacherLiveDemo(state: PlatformState, teacherId: string, re
   if (!base) return null;
 
   const lesson = getLesson(state, base.lessonId);
-  const session: ClassSession = {
-    ...base,
-    startAt: new Date(now - 17 * 60_000).toISOString(),
-    endAt: new Date(now + 23 * 60_000).toISOString(),
-    capacity: Math.max(18, base.capacity),
-    roomLabel: base.roomLabel || "在线课堂"
-  };
-  const liveSets = setsForSession(state, session)
+  const liveSets = setsForSession(state, base)
     .filter((set) => set.status === "published" && set.phase === "live")
     .sort((a, b) => a.order - b.order);
 
-  if (!lesson || liveSets.length === 0) return null;
+  if (!lesson) return null;
 
-  const participantTotal = 24;
-  const presentCount = 18;
+  const hasLiveContent = liveSets.length > 0;
+  const session: ClassSession = {
+    ...base,
+    capacity: hasLiveContent ? Math.max(18, base.capacity) : base.capacity,
+    roomLabel: base.roomLabel || "在线课堂"
+  };
+
+  const participantTotal = hasLiveContent ? 24 : (base.roster?.length ?? 0);
+  const presentCount = hasLiveContent ? 18 : 0;
   const interactions = liveSets.map((set, index) => {
     const status = statusForIndex(index, liveSets.length);
     const version = getCurrentInteractionVersion(state, set);
@@ -254,18 +254,24 @@ export function buildTeacherLiveDemo(state: PlatformState, teacherId: string, re
       items: itemMetrics(items, status, presentCount, index)
     };
   });
-  const activeInteractionId = interactions.find((interaction) => interaction.status === "live")?.id ?? interactions[0].id;
+  const activeInteractionId = interactions.find((interaction) => interaction.status === "live")?.id ?? interactions[0]?.id ?? "";
   const answeredItemCount = interactions.reduce(
     (sum, interaction) => sum + interaction.items.filter((item) => item.answered >= presentCount * 0.75).length,
     0
   );
 
-  const teachingSteps: LiveTeachingStep[] = [
-    { id: "warmup", label: "热身问候", detail: "Hello / Halo，跟读问候", status: "done" },
-    { id: "vocabulary", label: "词汇呈现", detail: "你好、早上好、再见", status: "done" },
-    { id: "practice", label: "互动练习", detail: `${activeInteractionId ? interactions.find((item) => item.id === activeInteractionId)?.title : "课堂互动"}正在作答`, status: "current" },
-    { id: "wrapup", label: "课堂收束", detail: "自我介绍和课堂投票", status: "upcoming" }
-  ];
+  const teachingSteps: LiveTeachingStep[] = hasLiveContent
+    ? [
+        { id: "warmup", label: "热身问候", detail: "Hello / Halo，跟读问候", status: "done" },
+        { id: "vocabulary", label: "词汇呈现", detail: "你好、早上好、再见", status: "done" },
+        { id: "practice", label: "互动练习", detail: `${activeInteractionId ? interactions.find((item) => item.id === activeInteractionId)?.title : "课堂互动"}正在作答`, status: "current" },
+        { id: "wrapup", label: "课堂收束", detail: "自我介绍和课堂投票", status: "upcoming" }
+      ]
+    : [];
+  const durationMinutes = Math.max(
+    1,
+    Math.round((new Date(base.endAt).getTime() - new Date(base.startAt).getTime()) / 60_000)
+  );
 
   return {
     session,
@@ -274,8 +280,8 @@ export function buildTeacherLiveDemo(state: PlatformState, teacherId: string, re
     lessonDescription: lesson.description,
     coverEmoji: lesson.coverEmoji,
     color: lesson.color,
-    elapsedMinutes: 17,
-    remainingMinutes: 23,
+    elapsedMinutes: hasLiveContent ? 17 : 0,
+    remainingMinutes: hasLiveContent ? 23 : durationMinutes,
     participantTotal,
     presentCount,
     answeredCount: answeredItemCount,
@@ -283,11 +289,13 @@ export function buildTeacherLiveDemo(state: PlatformState, teacherId: string, re
     interactions,
     courseware: coursewareMetrics(state, lesson.id, session.id, now),
     teachingSteps,
-    activityFeed: [
-      { id: "feed-1", label: "Anisa 提交了连线互动", detail: "12 秒前", tone: "mint" },
-      { id: "feed-2", label: "当前题目已开放", detail: "3 分钟前", tone: "purple" },
-      { id: "feed-3", label: "Maya 完成了翻牌记忆", detail: "5 分钟前", tone: "orange" }
-    ]
+    activityFeed: hasLiveContent
+      ? [
+          { id: "feed-1", label: "Anisa 提交了连线互动", detail: "12 秒前", tone: "mint" },
+          { id: "feed-2", label: "当前题目已开放", detail: "3 分钟前", tone: "purple" },
+          { id: "feed-3", label: "Maya 完成了翻牌记忆", detail: "5 分钟前", tone: "orange" }
+        ]
+      : []
   };
 }
 

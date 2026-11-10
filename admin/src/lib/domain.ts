@@ -43,6 +43,20 @@ export function getSession(state: PlatformState, sessionId: string) {
   return state.sessions.find((session) => session.id === sessionId);
 }
 
+export type SessionRuntimeStatus = "upcoming" | "live" | "ended" | "cancelled";
+
+/**
+ * 课堂的开始和结束由老师实际点击按钮决定。
+ * 仅当老师从未开始、且课次计划结束时间已经过去时，历史数据才按已结束处理。
+ */
+export function sessionRuntimeStatus(session: ClassSession, now = Date.now()): SessionRuntimeStatus {
+  if (session.status === "cancelled") return "cancelled";
+  if (session.liveEndedAt) return "ended";
+  if (session.liveStartedAt) return "live";
+  if (now > new Date(session.endAt).getTime()) return "ended";
+  return "upcoming";
+}
+
 export function getTeacherSessions(state: PlatformState, teacherId: string) {
   return state.sessions
     .filter((session) => session.teacherId === teacherId && session.status !== "cancelled")

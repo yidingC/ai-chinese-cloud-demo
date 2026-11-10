@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { BookOpen, Pause, Play } from "lucide-react";
 import type { Material, Phase, PlatformState } from "../domain/types";
 import { lessonContent } from "../lib/domain";
@@ -11,7 +12,11 @@ import { InteractionSetPlayerModal } from "./InteractionSetPlayerModal";
 
 type ContentTab = "courseware" | "materials" | "interactions";
 
-const phaseLabels: Record<Phase, string> = { preview: "课前预习", live: "课中", review: "课后复习" };
+const phaseLabelKeys: Record<Phase, string> = {
+  preview: "student.schedule.previewFallback",
+  live: "common.phaseLive",
+  review: "student.review"
+};
 
 function materialUrl(material: Material) {
   return material.versions.find((item) => item.version === material.currentVersion)?.url ?? material.versions.at(-1)?.url;
@@ -31,8 +36,8 @@ export function SessionContentModal({
   title,
   coursewareUrl,
   coursewareMaterialId,
-  coursewareBadge = "互动 HTML 课件",
-  coursewareNote = "支持词汇点读、选择题和句子排序，可直接在后台内播放。",
+  coursewareBadge,
+  coursewareNote,
   onOpenLesson
 }: {
   open: boolean;
@@ -49,6 +54,7 @@ export function SessionContentModal({
   coursewareNote?: string;
   onOpenLesson: () => void;
 }) {
+  const { t } = useTranslation();
   const { run } = usePlatformStore();
   const [tab, setTab] = useState<ContentTab>("courseware");
   const [playingId, setPlayingId] = useState("");
@@ -71,11 +77,14 @@ export function SessionContentModal({
     state.interactionAttempts.filter((attempt) => attempt.studentId === state.currentUserId).map((attempt) => attempt.setId)
   );
   const activeSet = content.sets.find((set) => set.id === activeSetId);
+  const phaseLabel = t(phaseLabelKeys[phase]);
+  const badgeLabel = coursewareBadge ?? t("student.content.coursewareBadge");
+  const noteLabel = coursewareNote ?? t("student.content.coursewareNote");
   const hasCourseware = Boolean(coursewareUrl);
   const tabs: Array<{ value: ContentTab; label: string; count?: number }> = [];
-  if (hasCourseware || phase === "preview") tabs.push({ value: "courseware", label: "课件" });
-  tabs.push({ value: "materials", label: "材料", count: materials.length });
-  tabs.push({ value: "interactions", label: "互动", count: content.sets.length });
+  if (hasCourseware || phase === "preview") tabs.push({ value: "courseware", label: t("student.content.coursewareTab") });
+  tabs.push({ value: "materials", label: t("student.content.materialsTab"), count: materials.length });
+  tabs.push({ value: "interactions", label: t("student.content.interactionsTab"), count: content.sets.length });
   const activeTab: ContentTab = tabs.some((item) => item.value === tab) ? tab : tabs[0].value;
 
   function toggleAudio(material: Material) {
@@ -95,7 +104,7 @@ export function SessionContentModal({
     <>
       <Modal
         open={open}
-        title={`${title} · ${phaseLabels[phase]}`}
+        title={`${title} · ${phaseLabel}`}
         onClose={onClose}
         width="1120px"
         panelClassName="session-content-modal"
@@ -108,12 +117,12 @@ export function SessionContentModal({
               <div className="courseware-player-shell">
                 <div className="courseware-player-toolbar">
                   <div>
-                    <Badge tone="purple">{coursewareBadge}</Badge>
-                    <span>{coursewareNote}</span>
+                    <Badge tone="purple">{badgeLabel}</Badge>
+                    <span>{noteLabel}</span>
                   </div>
                   <div className="courseware-player-actions">
                     <Button size="sm" variant="ghost" onClick={onOpenLesson}>
-                      <BookOpen size={15} /> 打开学习页
+                      <BookOpen size={15} /> {t("student.content.openLesson")}
                     </Button>
                   </div>
                 </div>
@@ -121,9 +130,9 @@ export function SessionContentModal({
               </div>
             ) : (
               <EmptyState
-                title="这节课暂时没有互动课件"
-                description={`老师上传课件后会自动出现在这里；也可以先看「材料」里的${phaseLabels[phase]}资料。`}
-                action={materials.length > 0 ? <Button variant="secondary" onClick={() => setTab("materials")}>查看材料</Button> : undefined}
+                title={t("student.content.emptyCoursewareTitle")}
+                description={t("student.content.emptyCoursewareDesc", { phase: phaseLabel })}
+                action={materials.length > 0 ? <Button variant="secondary" onClick={() => setTab("materials")}>{t("student.content.viewMaterials")}</Button> : undefined}
               />
             )
           )}
@@ -136,11 +145,11 @@ export function SessionContentModal({
                   material={material}
                   playing={playingId === material.id}
                   onPlay={() => toggleAudio(material)}
-                  onDownload={() => run(() => platform.trackDownload(material.id), "下载已记录")}
+                  onDownload={() => run(() => platform.trackDownload(material.id), t("student.content.downloadRecorded"))}
                 />
               ))}
               {materials.length === 0 && (
-                <EmptyState title="本阶段暂无其他材料" description={`老师补充后会在${phaseLabels[phase]}里出现。`} />
+                <EmptyState title={t("student.content.emptyMaterialsTitle")} description={t("student.content.emptyMaterialsDesc", { phase: phaseLabel })} />
               )}
             </div>
           )}
@@ -157,21 +166,21 @@ export function SessionContentModal({
                     <div>
                       <div className="set-title-row">
                         <h3>{set.title}</h3>
-                        {done ? <Badge tone="mint">已完成</Badge> : <Badge tone="orange">待完成</Badge>}
+                        {done ? <Badge tone="mint">{t("student.content.completed")}</Badge> : <Badge tone="orange">{t("student.content.pending")}</Badge>}
                       </div>
                       <div className="session-preview-set-meta">
-                        <small>{version?.items.length ?? 0} 题</small>
+                        <small>{t("student.content.questionCount", { count: version?.items.length ?? 0 })}</small>
                         {types.map((type) => (
                           <Badge tone="neutral" key={type}>{INTERACTION_TYPE_SHORT_LABELS[type]}</Badge>
                         ))}
                       </div>
                     </div>
-                    <Button size="sm" onClick={() => setActiveSetId(set.id)}>{done ? "再练一次" : "开始互动"}</Button>
+                    <Button size="sm" onClick={() => setActiveSetId(set.id)}>{done ? t("student.retry") : t("student.content.startInteraction")}</Button>
                   </article>
                 );
               })}
               {content.sets.length === 0 && (
-                <EmptyState title="本阶段暂无互动" description={`老师发布后会在${phaseLabels[phase]}里出现。`} />
+                <EmptyState title={t("student.content.emptyInteractionsTitle")} description={t("student.content.emptyInteractionsDesc", { phase: phaseLabel })} />
               )}
             </div>
           )}
@@ -184,7 +193,7 @@ export function SessionContentModal({
           set={activeSet}
           sessionId={sessionId}
           phase={phase}
-          closeLabel={`返回${phaseLabels[phase]}`}
+          closeLabel={t("student.content.backToPhase", { phase: phaseLabel })}
           onClose={() => setActiveSetId("")}
         />
       )}

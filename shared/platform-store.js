@@ -122,7 +122,7 @@
     const subjectIds = new Set(merged.subjects.map((subject) => subject.id));
     merged.folders.forEach((course, index) => {
       course.subjectId = subjectIds.has(course.subjectId) ? course.subjectId : defaultSubject.id;
-      course.status = ["draft", "published", "disabled"].includes(course.status) ? course.status : "published";
+      course.status = "published";
       course.tags = Array.isArray(course.tags) ? course.tags.filter(Boolean) : [];
       course.order = Number(course.order) || index + 1;
       delete course.parentId;
@@ -131,6 +131,7 @@
     merged.lessons.forEach((lesson) => {
       const nextOrder = (lessonSequence.get(lesson.folderId) || 0) + 1;
       lesson.order = Number(lesson.order) || nextOrder;
+      lesson.status = "published";
       lessonSequence.set(lesson.folderId, Math.max(nextOrder, lesson.order));
     });
 
@@ -223,6 +224,9 @@
     merged.interactionVersions = merged.interactionVersions.filter((version) => !retiredInteractionSetIds.includes(version.setId));
     const demoInteractionSetIds = [
       "set-friends-preview",
+      "set-friends-live-hello",
+      "set-friends-live-match",
+      "set-friends-live-intro",
       "set-greetings-review-voice",
       "set-greetings-scenario",
       "set-greetings-batch-three",
@@ -986,8 +990,10 @@
   }
 
   function sessionRosterFrozen(session) {
-    return new Date(session.startAt).getTime() <= Date.now();
+    return Boolean(session.liveStartedAt || session.liveEndedAt) || new Date(session.endAt).getTime() <= Date.now();
   }
+
+  const ROSTER_FROZEN_MESSAGE = "课堂已开始或已结束，课次名单已冻结";
 
   function bookedCount(draft, sessionId) {
     return draft.bookings.filter((booking) => booking.sessionId === sessionId && booking.status === "booked").length;
@@ -1827,13 +1833,49 @@
     }, "session");
   }
 
+  function startSession({ sessionId, actorId }) {
+    return save((draft) => {
+      const session = getSession(draft, sessionId);
+      if (!session) return result(false, null, "课次不存在", "NOT_FOUND");
+      if (session.status === "cancelled") return result(false, null, "已取消的课次不能开始", "INVALID_STATE");
+      if (!session.liveStartedAt) session.liveStartedAt = nowIso();
+      delete session.liveEndedAt;
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: "start_session",
+        targetType: "session",
+        targetId: sessionId,
+        summary: `开始“${session.title}”课堂`
+      });
+      return result(true, session);
+    }, "session");
+  }
+
+  function endSession({ sessionId, actorId }) {
+    return save((draft) => {
+      const session = getSession(draft, sessionId);
+      if (!session) return result(false, null, "课次不存在", "NOT_FOUND");
+      if (session.status === "cancelled") return result(false, null, "已取消的课次不能结束", "INVALID_STATE");
+      if (!session.liveStartedAt) session.liveStartedAt = nowIso();
+      session.liveEndedAt = nowIso();
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: "end_session",
+        targetType: "session",
+        targetId: sessionId,
+        summary: `结束“${session.title}”课堂`
+      });
+      return result(true, session);
+    }, "session");
+  }
+
   /** 同步只处理自动来源：补入新班级成员、移出已离开班级者，人工补录的学生保留。 */
   function syncSessionRoster({ sessionId, actorId }) {
     return save((draft) => {
       const session = getSession(draft, sessionId);
       if (!session) return result(false, null, "课次不存在", "NOT_FOUND");
       if (sessionRosterFrozen(session)) {
-        return result(false, null, "课堂已开始，课次名单已冻结", "ROSTER_FROZEN");
+        return result(false, null, ROSTER_FROZEN_MESSAGE, "ROSTER_FROZEN");
       }
       const entries = Array.isArray(session.roster) ? session.roster : [];
       const activeIds = activeClassStudents(draft, session.classId);
@@ -1862,7 +1904,7 @@
       const session = getSession(draft, sessionId);
       if (!session) return result(false, null, "课次不存在", "NOT_FOUND");
       if (sessionRosterFrozen(session)) {
-        return result(false, null, "课堂已开始，课次名单已冻结", "ROSTER_FROZEN");
+        return result(false, null, ROSTER_FROZEN_MESSAGE, "ROSTER_FROZEN");
       }
       const requested = [...new Set((Array.isArray(studentIds) ? studentIds : []).filter(Boolean))];
       if (!requested.length) return result(false, null, "请选择要补录的学生", "EMPTY_SELECTION");
@@ -1891,7 +1933,7 @@
       const session = getSession(draft, sessionId);
       if (!session) return result(false, null, "课次不存在", "NOT_FOUND");
       if (sessionRosterFrozen(session)) {
-        return result(false, null, "课堂已开始，课次名单已冻结", "ROSTER_FROZEN");
+        return result(false, null, ROSTER_FROZEN_MESSAGE, "ROSTER_FROZEN");
       }
       const entries = Array.isArray(session.roster) ? session.roster : [];
       if (!entries.some((entry) => entry.studentId === studentId)) {
@@ -2372,7 +2414,7 @@
         tags: Array.isArray(tags) ? tags.filter(Boolean) : [],
         color,
         order: Math.max(0, ...draft.folders.filter((item) => item.subjectId === subjectId).map((item) => Number(item.order) || 0)) + 1,
-        status: "draft",
+        status: "published",
         createdAt: nowIso()
       };
       draft.folders.push(course);
@@ -2477,7 +2519,7 @@
         tags: Array.isArray(tags) ? tags.filter(Boolean) : [],
         color,
         coverEmoji,
-        status: "draft",
+        status: "published",
         order: Math.max(0, ...draft.lessons.filter((item) => item.folderId === folderId).map((item) => Number(item.order) || 0)) + 1,
         createdAt: nowIso()
       };
@@ -2574,6 +2616,32 @@
         targetType: "lesson",
         targetId: lesson.id,
         summary: `${direction === "up" ? "上移" : "下移"}课节“${lesson.title}”`
+      });
+      return result(true, sequence);
+    }, "catalog");
+  }
+
+  function reorderLesson({ lessonId, targetIndex, actorId }) {
+    return save((draft) => {
+      const lesson = draft.lessons.find((item) => item.id === lessonId);
+      if (!lesson) return result(false, null, "课节不存在", "NOT_FOUND");
+      const sequence = draft.lessons
+        .filter((item) => item.folderId === lesson.folderId)
+        .sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
+      if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= sequence.length) {
+        return result(false, null, "目标位置无效", "INVALID_INDEX");
+      }
+      const index = sequence.findIndex((item) => item.id === lessonId);
+      if (index === targetIndex) return result(true, sequence);
+      const [moved] = sequence.splice(index, 1);
+      sequence.splice(targetIndex, 0, moved);
+      sequence.forEach((item, orderIndex) => { item.order = orderIndex + 1; });
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: "reorder_lesson",
+        targetType: "lesson",
+        targetId: lesson.id,
+        summary: `调整课节“${lesson.title}”顺序`
       });
       return result(true, sequence);
     }, "catalog");
@@ -3253,75 +3321,14 @@
   const academicAllowedMethods = new Set([
     "setCurrentUser",
     "updatePreferences",
-    "bookSession",
-    "joinWaitlist",
-    "leaveWaitlist",
-    "cancelBooking",
-    "enrollSeries",
-    "reviewBooking",
-    "createClass",
-    "updateClass",
-    "deleteClass",
-    "addClassMembers",
-    "removeClassMember",
-    "createSession",
-    "createSeries",
-    "updateSession",
-    "syncSessionRoster",
-    "addSessionRosterStudents",
-    "removeSessionRosterStudent",
-    "updateSeriesSchedule",
-    "cancelSession",
-    "resolveChangeRequest",
     "createStudent",
-    "createAssessment",
-    "saveAssessmentScores",
-    "archiveAssessment",
-    "saveGradePolicy",
-    "updateStudent",
     "markNotificationRead",
     "markAllNotificationsRead"
   ]);
 
   function academicMethodSchoolId(draft, method, input, actorId) {
-    if (method === "updateClass" || method === "deleteClass" || method === "addClassMembers" || method === "removeClassMember") {
-      return getClass(draft, input.classId)?.schoolId || "";
-    }
-    if (method === "createClass" || method === "createStudent") {
+    if (method === "createStudent") {
       return input.schoolId || activeAcademicSchoolId(draft, actorId);
-    }
-    if (method === "createSession" || method === "createSeries") {
-      return getClass(draft, input.classId)?.schoolId || input.schoolId || activeAcademicSchoolId(draft, actorId);
-    }
-    if (method === "updateSeriesSchedule") return draft.series.find((item) => item.id === input.seriesId)?.schoolId || "";
-    if (
-      method === "updateSession" ||
-      method === "cancelSession" ||
-      method === "bookSession" ||
-      method === "syncSessionRoster" ||
-      method === "addSessionRosterStudents" ||
-      method === "removeSessionRosterStudent"
-    ) {
-      return schoolIdForSession(draft, input.sessionId);
-    }
-    if (method === "cancelBooking" || method === "reviewBooking") {
-      return schoolIdForBooking(draft, input.bookingId || input.sessionId);
-    }
-    if (method === "joinWaitlist") return schoolIdForSession(draft, input.sessionId) || draft.series.find((item) => item.id === input.seriesId)?.schoolId || "";
-    if (method === "leaveWaitlist") {
-      const entry = draft.waitlist.find((item) => item.id === input.waitlistId);
-      return entry ? schoolIdForSession(draft, entry.sessionId) || (entry.sessionIds || []).map((id) => schoolIdForSession(draft, id)).find(Boolean) : "";
-    }
-    if (method === "enrollSeries") return draft.series.find((item) => item.id === input.seriesId)?.schoolId || "";
-    if (method === "resolveChangeRequest") return schoolIdForChangeRequest(draft, input.requestId);
-    if (method === "createAssessment") return getClass(draft, input.classId)?.schoolId || "";
-    if (method === "saveAssessmentScores" || method === "archiveAssessment") {
-      return draft.assessments.find((item) => item.id === input.assessmentId)?.schoolId || "";
-    }
-    if (method === "saveGradePolicy") return input.schoolId || activeAcademicSchoolId(draft, actorId);
-    if (method === "updateStudent") {
-      const ownSchoolId = activeAcademicSchoolId(draft, actorId);
-      return studentBelongsToSchool(draft, input.studentId, ownSchoolId) ? ownSchoolId : "";
     }
     return "";
   }
@@ -3340,23 +3347,21 @@
     }
     const schoolId = activeAcademicSchoolId(draft, actorId);
     if (!schoolId) return result(false, null, "账号未绑定学校", "FORBIDDEN");
-    const teacherId = input?.teacherId || input?.patch?.teacherId;
+    const teacherId = input?.teacherId || input?.patch?.teacherId || (method === "createStudent" ? input?.preferredTeacherId : "");
     if (teacherId) {
       const member = draft.schoolMemberships.some(
         (item) => item.schoolId === schoolId && item.userId === teacherId && item.role === "teacher" && item.status === "active"
       );
       if (!member) return result(false, null, "授课教师不属于本校", "OUT_OF_SCOPE");
     }
-    if (method === "bookSession" && !studentBelongsToSchool(draft, input.studentId, schoolId)) {
-      return result(false, null, "学生不属于本校", "OUT_OF_SCOPE");
-    }
-    if (method === "updateStudent") {
-      if (!studentBelongsToSchool(draft, input.studentId, schoolId)) {
-        return result(false, null, "学生不属于本校", "OUT_OF_SCOPE");
+    if (method === "createStudent") {
+      const className = String(input.className || "").trim();
+      const classGroup = draft.classes.find(
+        (item) => item.schoolId === schoolId && item.name === className && item.status === "active"
+      );
+      if (!classGroup) {
+        return result(false, null, "学校教务只能把学生加入本校已有班级", "OUT_OF_SCOPE");
       }
-      const allowedFields = new Set(["program", "level", "learningGoal", "notes", "tags", "preferredTeacherId"]);
-      const invalidField = Object.keys(input.patch || {}).find((field) => !allowedFields.has(field));
-      if (invalidField) return result(false, null, "学校教务只能维护本校学习档案字段", "FORBIDDEN");
     }
     const resourceSchoolId = academicMethodSchoolId(draft, method, input || {}, actorId);
     if (Object.prototype.hasOwnProperty.call(input || {}, "schoolId") && input.schoolId !== schoolId) {
@@ -3408,6 +3413,8 @@
     createSession,
     createSeries,
     updateSession,
+    startSession,
+    endSession,
     syncSessionRoster,
     addSessionRosterStudents,
     removeSessionRosterStudent,
@@ -3432,6 +3439,7 @@
     setLessonStatus,
     deleteLesson,
     moveLesson,
+    reorderLesson,
     createStudent,
     addMockMaterial,
     attachMaterial,

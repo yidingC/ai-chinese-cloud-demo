@@ -26,11 +26,11 @@ import { formatDateTime } from "../../lib/format";
 /** 课中互动改由学生端 App（移动端）承载，网页端不再展示这一档；恢复时把开关改成 true。 */
 const SHOW_LIVE_PHASE = false;
 
-const phaseMeta: Array<{ phase: Phase; label: string; icon: typeof Play }> = [
-  { phase: "preview", label: "课前预习", icon: Sparkles },
+const phaseMeta: Array<{ phase: Phase; labelKey: string; icon: typeof Play }> = [
+  { phase: "preview", labelKey: "student.lessonPage.phasePreview", icon: Sparkles },
   // 课中互动这一档先隐藏（去掉下面两行的注释、并把 SHOW_LIVE_PHASE 改成 true 即可恢复）。
-  // ...(SHOW_LIVE_PHASE ? [{ phase: "live" as Phase, label: "课中互动", icon: Play }] : []),
-  { phase: "review", label: "课后复习", icon: CheckCircle2 }
+  // ...(SHOW_LIVE_PHASE ? [{ phase: "live" as Phase, labelKey: "student.lessonPage.phaseLive", icon: Play }] : []),
+  { phase: "review", labelKey: "student.lessonPage.phaseReview", icon: CheckCircle2 }
 ];
 
 function currentMaterialUrl(material: Material) {
@@ -62,15 +62,15 @@ export function StudentLesson() {
   const activeCourseware = allMaterials.find((material) => material.id === activeCoursewareId);
   const activeCoursewareUrl = activeCourseware ? currentMaterialUrl(activeCourseware) : undefined;
   const activeCoursewareLabel = activeCourseware?.kind === "courseware"
-    ? "互动 HTML 课件"
+    ? t("student.lessonPage.coursewareInteractive")
     : activeCourseware?.fileType === "pdf"
-      ? "PDF 课件"
-      : "课程课件";
+      ? t("student.lessonPage.coursewarePdf")
+      : t("student.lessonPage.coursewareGeneric");
   const activeCoursewareDescription = activeCourseware?.kind === "courseware"
-    ? "支持词汇点读、选择题和句子排序，可直接在后台内播放。"
+    ? t("student.lessonPage.coursewareInteractiveNote")
     : activeCourseware?.fileType === "pdf"
-      ? "在后台内全屏预览该 PDF；内容加载后可直接翻页查看。"
-      : "当前课件会在后台内全屏展示；内容加载后可直接查看。";
+      ? t("student.lessonPage.coursewarePdfNote")
+      : t("student.lessonPage.coursewareGenericNote");
   const defaultCourseware = allMaterials.find((material) => material.kind === "courseware" && currentMaterialUrl(material)) ??
     allMaterials.find((material) => material.fileType === "pdf" && currentMaterialUrl(material));
   const isBooked = session ? isSessionBooked(state, user.id, session.id) : true;
@@ -90,14 +90,14 @@ export function StudentLesson() {
   }
 
   if (!lesson) {
-    return <EmptyState title="课节不存在" description="请返回课表重新选择。" action={<Button onClick={() => navigate("/student/schedule")}>返回课表</Button>} />;
+    return <EmptyState title={t("student.lessonPage.missingTitle")} description={t("student.lessonPage.missingDescription")} action={<Button onClick={() => navigate("/student/schedule")}>{t("student.lessonPage.backToSchedule")}</Button>} />;
   }
 
   const activeCoursewareTitle = activeCourseware?.kind === "courseware"
     ? activeCourseware.title
     : lesson.id === "lesson-greetings"
-      ? "第 1 课 · 你好，新朋友"
-      : `${lesson.title} · 课堂课件`;
+      ? t("student.lessonPage.firstLesson")
+      : t("student.lessonPage.coursewareSuffix", { title: lesson.title });
 
   return (
     <>
@@ -107,7 +107,7 @@ export function StudentLesson() {
         description={lesson.description}
         actions={
           <Button variant="secondary" onClick={() => navigate("/student/schedule")}>
-            <ArrowLeft size={17} /> 返回课表
+            <ArrowLeft size={17} /> {t("student.lessonPage.backToSchedule")}
           </Button>
         }
       />
@@ -115,16 +115,16 @@ export function StudentLesson() {
       <Card className="lesson-overview-card">
         <div className="lesson-cover-large" style={{ background: `linear-gradient(145deg, ${lesson.color}, #f6f3ff)` }}>
           <span>{lesson.coverEmoji}</span>
-          <Badge tone="purple">{lesson.tags[0] ?? "大班课"}</Badge>
+          <Badge tone="purple">{lesson.tags[0] ?? t("student.lessonPage.defaultTag")}</Badge>
         </div>
         <div className="lesson-overview-copy">
           <h2>{lesson.subtitle}</h2>
           <p>{lesson.description}</p>
           <div className="lesson-overview-meta">
             {session && <span><GraduationCap size={16} /> {session.className}</span>}
-            <span><Clock3 size={16} /> {lesson.durationMinutes} 分钟</span>
+            <span><Clock3 size={16} /> {t("student.lessonPage.minutes", { count: lesson.durationMinutes })}</span>
             {session && <span>{formatDateTime(session.startAt, state.ui.timeZone, state.ui.language)}</span>}
-            <span><MapPin size={16} /> {session?.roomLabel ?? "在线课堂"}</span>
+            <span><MapPin size={16} /> {session?.roomLabel ?? t("student.lessonPage.onlineRoom")}</span>
             {teacher && (
               <span className="lesson-overview-teacher">
                 <Avatar label={teacher.avatar} size="sm" tone="orange" /> {teacher.name}
@@ -133,13 +133,13 @@ export function StudentLesson() {
           </div>
           <div className="lesson-overview-actions">
             <Button variant="secondary" size="sm" disabled={!defaultCourseware} onClick={openCourseware}>
-              <PlayCircle size={16} /> 查看课件
+              <PlayCircle size={16} /> {t("student.lessonPage.viewCourseware")}
             </Button>
           </div>
           <PmNote block kind="口径" note="只统计当前学习阶段中已提交作答的互动。">
             <div className="overview-progress">
             <div>
-              <span>本课互动完成</span>
+              <span>{t("student.lessonPage.interactionsDone")}</span>
               <strong>{content.sets.filter((set) => completed.has(set.id)).length}/{content.sets.length}</strong>
             </div>
             <ProgressBar value={content.sets.length ? (content.sets.filter((set) => completed.has(set.id)).length / content.sets.length) * 100 : 0} />
@@ -155,7 +155,7 @@ export function StudentLesson() {
             onChange={changePhase}
             items={phaseMeta.map((item) => ({
               value: item.phase,
-              label: item.label,
+              label: t(item.labelKey),
               count: lessonContent(state, lessonId, item.phase).sets.length
             }))}
           />
@@ -166,11 +166,11 @@ export function StudentLesson() {
         <Card className="locked-stage-card">
           <LockKeyhole size={25} />
           <div>
-            <strong>预约后解锁该课节</strong>
-            <p>预习和复习材料只对已预约学生开放。</p>
+            <strong>{t("student.lessonPage.lockedTitle")}</strong>
+            <p>{t("student.lessonPage.lockedDescription")}</p>
           </div>
-          <PmNote kind="流程" note="点击进入约课中心；预约成功后当前课节立即解锁。">
-            <Button onClick={() => navigate("/student/book")}>去约课</Button>
+          <PmNote kind="流程" note="返回课表查看已经安排的课程。">
+            <Button onClick={() => navigate("/student/schedule")}>{t("student.lessonPage.backToMySchedule")}</Button>
           </PmNote>
         </Card>
       )}
@@ -182,10 +182,10 @@ export function StudentLesson() {
             <strong>{t("student.phaseLocked")}</strong>
             <p>
               {phase === "live"
-                ? "课中互动会在课堂开始前 10 分钟开放。" // 课中档隐藏后走不到这里，恢复开关后生效
+                ? t("student.lessonPage.liveLocked") // 课中档隐藏后走不到这里，恢复开关后生效
                 : phase === "review"
-                  ? "课堂结束后，复习内容和结果会在这里出现。"
-                  : "该阶段已经结束。"}
+                  ? t("student.lessonPage.reviewLocked")
+                  : t("student.lessonPage.phaseEnded")}
             </p>
           </div>
           {session && <Badge tone="neutral">{phaseAvailabilityLabel(session, phase)}</Badge>}
@@ -199,7 +199,7 @@ export function StudentLesson() {
               <span className="eyebrow">Interactions</span>
               <h2>{t(phase === "preview" ? "student.interactionPreview" : phase === "review" ? "student.interactionReview" : "student.interactionLive")}</h2>
             </div>
-            <Badge tone="purple">{content.sets.length} 项</Badge>
+            <Badge tone="purple">{t("student.lessonPage.itemCount", { count: content.sets.length })}</Badge>
           </div>
           <PmNote block kind="流程" note="开始互动会创建作答记录；再练不会覆盖历史，只更新最佳分。这些互动的结果可以在老师端的课程结果处看到。">
             <div className="interaction-set-list">
@@ -211,19 +211,19 @@ export function StudentLesson() {
                   <div>
                     <div className="set-title-row">
                       <h3>{set.title}</h3>
-                      {done ? <Badge tone="mint">已完成</Badge> : <Badge tone="orange">待完成</Badge>}
+                      {done ? <Badge tone="mint">{t("student.lessonPage.completed")}</Badge> : <Badge tone="orange">{t("student.lessonPage.pending")}</Badge>}
                     </div>
                   </div>
                   <Button
                     disabled={!isBooked || !phaseOpen}
                     onClick={() => setActiveSetId(set.id)}
                   >
-                    {done ? t("student.retry") : "开始互动"}
+                    {done ? t("student.retry") : t("student.lessonPage.startInteraction")}
                   </Button>
                 </Card>
               );
             })}
-            {content.sets.length === 0 && <EmptyState title="本阶段暂无互动" description="教师发布后会立即出现在这里。" />}
+            {content.sets.length === 0 && <EmptyState title={t("student.lessonPage.noInteractionsTitle")} description={t("student.lessonPage.noInteractionsDesc")} />}
             </div>
           </PmNote>
         </section>
@@ -234,7 +234,7 @@ export function StudentLesson() {
               <span className="eyebrow">Materials</span>
               <h2>{t("student.material")}</h2>
             </div>
-            <Badge tone="blue">{content.materials.length} 个文件</Badge>
+            <Badge tone="blue">{t("student.lessonPage.fileCount", { count: content.materials.length })}</Badge>
           </div>
           <PmNote block kind="口径" note="播放、查看和下载会记录为触达；下载只对已预约且阶段开放的学生生效。">
             <div className="material-list">
@@ -244,14 +244,14 @@ export function StudentLesson() {
                 material={material!}
                 playing={playingId === material!.id}
                 onPlay={() => toggleAudio(material!)}
-                onDownload={() => run(() => platform.trackDownload(material!.id), "下载已记录")}
+                onDownload={() => run(() => platform.trackDownload(material!.id), t("student.lessonPage.downloadRecorded"))}
                 onOpen={() => setActiveCoursewareId(material!.id)}
               />
             ))}
             {content.materials.length === 0 && <EmptyState title={t("student.noMaterials")} />}
             </div>
           </PmNote>
-          {materialsDone && <p className="muted-copy">已预约学生可下载当前阶段材料；新上传文件在原型中只保留元数据。</p>}
+          {materialsDone && <p className="muted-copy">{t("student.lessonPage.downloadNote")}</p>}
         </section>
       </div>
 
@@ -285,7 +285,7 @@ export function StudentLesson() {
           set={activeSet}
           sessionId={session?.id}
           phase={phase}
-          closeLabel="返回课节"
+          closeLabel={t("student.lessonPage.closePlayer")}
           onClose={() => setActiveSetId(null)}
         />
       )}

@@ -1,46 +1,119 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { AlertCircle, ArrowRight, CalendarPlus, CheckCircle2, ClipboardCheck, TrendingUp, UserRoundCheck, UsersRound, XCircle } from "lucide-react";
-import { Badge, Button, Card, EmptyState, PageHeader, ProgressBar, StatCard } from "../../components/ui";
+import { ArrowRight, CalendarOff, ChevronLeft, ChevronRight } from "lucide-react";
+import { Badge, Button, Card, PageHeader } from "../../components/ui";
+import { CalendarModal } from "../../components/CalendarModal";
+import { OperatorSessionRosterModal } from "../../components/OperatorSessionRosterModal";
 import { currentUser, getBookedCount, getLesson } from "../../lib/domain";
 import { getAcademicSchoolId, workspaceState } from "../../lib/academicScope";
-import { defaultGradeRange } from "../../lib/gradeAnalytics";
-import { buildTeacherRanking } from "../../lib/teacherPerformance";
-import { formatDateTime } from "../../lib/format";
-import { platform } from "../../lib/platform";
+import { formatTime } from "../../lib/format";
 import { usePlatformStore } from "../../store/usePlatformStore";
+
+const DAY_MS = 86_400_000;
+
+function dateKeyInZone(value: string | Date, timeZone: string) {
+  const date = typeof value === "string" ? new Date(value) : value;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const read = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
+  return `${read("year")}-${read("month")}-${read("day")}`;
+}
+
+function wallDateInZone(timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date());
+  const read = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value ?? 0);
+  return new Date(Date.UTC(read("year"), read("month") - 1, read("day")));
+}
+
+function wallKey(date: Date) {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
+function buildCalendarDays(monthAnchor: Date) {
+  const first = new Date(Date.UTC(monthAnchor.getUTCFullYear(), monthAnchor.getUTCMonth(), 1));
+  const leading = (first.getUTCDay() + 6) % 7;
+  const gridStart = new Date(first.getTime() - leading * DAY_MS);
+  return Array.from({ length: 42 }, (_, index) => new Date(gridStart.getTime() + index * DAY_MS));
+}
+
+function compactDay(value: string, timeZone: string, language: string) {
+  return new Intl.DateTimeFormat(language, {
+    timeZone,
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short"
+  }).format(new Date(value));
+}
 
 export function AcademicDashboard() {
   const navigate = useNavigate();
-  const { state: rawState, run } = usePlatformStore();
+  const { state: rawState } = usePlatformStore();
   const user = currentUser(rawState);
   const schoolId = getAcademicSchoolId(rawState, user);
   const state = useMemo(() => workspaceState(rawState, schoolId), [rawState, schoolId]);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [calendarDate, setCalendarDate] = useState(() => dateKeyInZone(new Date(), state.ui.timeZone));
+  const [calendarCursor, setCalendarCursor] = useState(() => {
+    const wallNow = wallDateInZone(state.ui.timeZone);
+    return new Date(Date.UTC(wallNow.getUTCFullYear(), wallNow.getUTCMonth(), 1));
+  });
+  const [rosterSessionId, setRosterSessionId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const wallNow = wallDateInZone(state.ui.timeZone);
+    setCalendarCursor(new Date(Date.UTC(wallNow.getUTCFullYear(), wallNow.getUTCMonth(), 1)));
+    setCalendarDate(dateKeyInZone(new Date(), state.ui.timeZone));
+  }, [state.ui.timeZone]);
+
   const school = state.schools.find((item) => item.id === schoolId);
   const published = state.sessions.filter((session) => session.status === "published");
-  const capacity = published.reduce((sum, session) => sum + session.capacity, 0);
-  const booked = published.reduce((sum, session) => sum + getBookedCount(state, session.id), 0);
-  const todayKey = new Date().toISOString().slice(0, 10);
-  const todaySessions = published.filter((session) => session.startAt.slice(0, 10) === todayKey);
-  const pendingBookings = state.bookings.filter((booking) => booking.status === "pending_review");
-  const pendingRequests = state.changeRequests.filter((request) => request.status === "pending");
-  const teacherRanking = useMemo(
-    () => buildTeacherRanking(state, schoolId, defaultGradeRange(state.ui.timeZone)).teachers.slice(0, 3),
-    [schoolId, state]
-  );
+  const now = Date.now();
+  const todayKey = dateKeyInZone(new Date(), state.ui.timeZone);
+  const todaySessions = published
+    .filter((session) => dateKeyInZone(session.startAt, state.ui.timeZone) === todayKey)
+    .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
   const upcoming = published
-    .filter((session) => new Date(session.endAt).getTime() >= Date.now())
-    .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
-    .slice(0, 5);
+    .filter((session) => new Date(session.endAt).getTime() >= now)
+    .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+  const focusSession = todaySessions.find((session) => new Date(session.endAt).getTime() >= now) ?? upcoming[0];
+  const focusIsToday = focusSession ? dateKeyInZone(focusSession.startAt, state.ui.timeZone) === todayKey : false;
+  const upcomingPreview = upcoming.filter((session) => session.id !== focusSession?.id).slice(0, 5);
+  const activeClasses = state.classes.filter((item) => item.status === "active");
+  const fmtWall = (options: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat(state.ui.language, { timeZone: "UTC", ...options });
+  const sessionsByDay = new Map<string, typeof published>();
+  published.forEach((session) => {
+    const key = dateKeyInZone(session.startAt, state.ui.timeZone);
+    sessionsByDay.set(key, [...(sessionsByDay.get(key) ?? []), session]);
+  });
+  const calendarDays = buildCalendarDays(calendarCursor);
+  const calendarMonth = calendarCursor.getUTCMonth();
+  const calendarYear = calendarCursor.getUTCFullYear();
+  const calendarMonthCount = published.filter((session) =>
+    dateKeyInZone(session.startAt, state.ui.timeZone).startsWith(`${calendarYear}-${String(calendarMonth + 1).padStart(2, "0")}`)
+  ).length;
+  const calendarMonthLabel = fmtWall({ year: "numeric", month: "long" }).format(calendarCursor);
+  const calendarWeekdays = calendarDays.slice(0, 7).map((day) => fmtWall({ weekday: "narrow" }).format(day));
+  const focusStatus = focusSession
+    ? now >= new Date(focusSession.startAt).getTime() && now <= new Date(focusSession.endAt).getTime()
+      ? "进行中"
+      : now < new Date(focusSession.startAt).getTime()
+        ? "待开始"
+        : "已结束"
+    : "";
+  const rosterSize = (sessionId: string) => state.sessions.find((session) => session.id === sessionId)?.roster?.length ?? 0;
 
-  function approve(bookingId: string) {
-    run(() => platform.reviewBooking({ bookingId, decision: "approve", reason: "学校教务审核通过", actorId: user.id }), "报名已通过");
-  }
-
-  function reject(bookingId: string) {
-    const reason = window.prompt("请输入驳回原因");
-    if (!reason) return;
-    run(() => platform.reviewBooking({ bookingId, decision: "reject", reason, actorId: user.id }), "报名已驳回");
+  function openCalendar(date = todayKey) {
+    setCalendarDate(date);
+    setCalendarOpen(true);
   }
 
   return (
@@ -48,101 +121,209 @@ export function AcademicDashboard() {
       <PageHeader
         eyebrow={`School operations · ${user.name}`}
         title={`${school?.name ?? "本校"}教学运行中心`}
-        description="排课、学生、考务与教师表现集中在本校范围内，课程内容仍由平台教学管理维护。"
-        actions={<Button onClick={() => navigate("/academic/scheduling")}><CalendarPlus size={17} /> 新建班次</Button>}
       />
 
-      <section className="operator-hero">
-        <div>
-          <Badge tone="mint">学校教务态势总览</Badge>
-          <h2>{pendingBookings.length ? `${pendingBookings.length} 条报名等待处理` : "本校教学运行状态正常"}</h2>
-          <p>{todaySessions.length} 节课今天进行，{published.length} 节已发布课次，教师表现按实际授课归属统计。</p>
+      <section className="operator-hero academic-hero">
+        <div className="academic-hero-copy">
+          <h2>本校 {activeClasses.length} 个班级，{state.students.length} 位学生</h2>
+          <div className="academic-hero-actions">
+            <button className="academic-hero-link" type="button" onClick={() => navigate("/academic/students")}>
+              查看班级与学生 <ArrowRight size={17} />
+            </button>
+          </div>
         </div>
-        <div className="operator-hero-visual">
-          <span className="orb orb-a" />
-          <span className="orb orb-b" />
-          <strong>{capacity ? Math.round((booked / capacity) * 100) : 0}%</strong>
-          <small>本校满班率</small>
+
+        <div className={`academic-focus-card${focusSession ? " is-clickable" : ""}`}>
+          {focusSession && (
+            <button
+              type="button"
+              className="academic-focus-card-hit"
+              data-session-id={focusSession.id}
+              aria-label={`在课程日历中查看 ${focusSession.title}`}
+              onClick={() => navigate(`/academic/scheduling?focus=${encodeURIComponent(focusSession.id)}`)}
+            />
+          )}
+          <div className="academic-focus-top">
+            <span>{focusIsToday ? "TODAY" : "NEXT CLASS"}</span>
+            <small>{focusSession ? compactDay(focusSession.startAt, state.ui.timeZone, state.ui.language) : "暂无课次"}</small>
+          </div>
+          {focusSession ? (
+            <>
+              <div className="academic-focus-time">
+                {formatTime(focusSession.startAt, state.ui.timeZone, state.ui.language)}
+                <span>–{formatTime(focusSession.endAt, state.ui.timeZone, state.ui.language)}</span>
+              </div>
+              <strong className="academic-focus-title">{focusSession.title}</strong>
+              <p className="academic-focus-meta">{focusSession.className} · {state.users.find((item) => item.id === focusSession.teacherId)?.name ?? "待定教师"}</p>
+              <div className="academic-focus-footer">
+                <Badge tone={focusStatus === "进行中" ? "mint" : focusStatus === "待开始" ? "blue" : "neutral"}>{focusStatus}</Badge>
+                <span>应到 {rosterSize(focusSession.id)} 人</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <strong className="academic-focus-title">近期暂无课程</strong>
+              <p className="academic-focus-meta">课表由教学管理统一发布。</p>
+            </>
+          )}
         </div>
       </section>
 
-      <section className="stat-grid stat-grid-4">
-        <StatCard label="本校教师" value={state.schoolMemberships.filter((item) => item.role === "teacher" && item.status === "active").length} detail="可排课教师成员" icon={<UsersRound size={20} />} tone="blue" />
-        <StatCard label="本校学生" value={state.students.length} detail="有效成员档案" icon={<UserRoundCheck size={20} />} tone="mint" />
-        <StatCard label="待审核报名" value={pendingBookings.length} detail="批准后占用名额" icon={<ClipboardCheck size={20} />} tone="orange" />
-        <StatCard label="待处理申请" value={pendingRequests.length} detail="教师调课与排课申请" icon={<AlertCircle size={20} />} tone="purple" />
-      </section>
-
-      <div className="dashboard-columns">
-        <Card>
+      <div className="teacher-dashboard-lower">
+        <Card className="teacher-upcoming-card">
           <div className="card-heading">
-            <div><span className="eyebrow">Review queue</span><h2>报名审核待办</h2></div>
-            <ClipboardCheck size={20} />
+            <div>
+              <span className="eyebrow">Upcoming classes</span>
+              <h2>接下来开课</h2>
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => navigate("/academic/scheduling")}>
+              查看全部 <ArrowRight size={15} />
+            </Button>
           </div>
-          <div className="attention-list">
-            {pendingBookings.slice(0, 5).map((booking) => {
-              const session = state.sessions.find((item) => item.id === booking.sessionId);
-              const student = state.users.find((item) => item.id === booking.studentId);
-              if (!session) return null;
-              return (
-                <div className="academic-review-row" key={booking.id}>
-                  <span>
-                    <strong>{student?.name ?? "学生"} · {session.title}</strong>
-                    <small>{session.className} · {formatDateTime(session.startAt, state.ui.timeZone, state.ui.language)}</small>
-                  </span>
-                  <span className="teacher-request-actions">
-                    <Button size="sm" variant="ghost" onClick={() => reject(booking.id)}><XCircle size={14} /> 驳回</Button>
-                    <Button size="sm" onClick={() => approve(booking.id)}><CheckCircle2 size={14} /> 通过</Button>
-                  </span>
-                </div>
-              );
-            })}
-            {pendingBookings.length === 0 && <EmptyState title="没有待审核报名" description="学生提交需审核的报名后会出现在这里。" />}
-          </div>
+          {upcomingPreview.length > 0 ? (
+            <div className="teacher-upcoming-list">
+              {upcomingPreview.map((session) => {
+                const lesson = getLesson(state, session.lessonId);
+                const teacher = state.users.find((item) => item.id === session.teacherId);
+                return (
+                  <button
+                    key={session.id}
+                    type="button"
+                    onClick={() => setRosterSessionId(session.id)}
+                  >
+                    <span className="teacher-upcoming-time">
+                      <strong>{compactDay(session.startAt, state.ui.timeZone, state.ui.language)}</strong>
+                      <small>{formatTime(session.startAt, state.ui.timeZone, state.ui.language)}</small>
+                    </span>
+                    <span className="teacher-upcoming-copy">
+                      <strong>{lesson?.coverEmoji ?? "📘"} {lesson?.title ?? session.title}</strong>
+                      <small>
+                        {session.className} · {teacher?.name ?? "待定教师"} · {session.roomLabel || "在线课堂"} · 应到 {session.roster?.length ?? getBookedCount(state, session.id)} 人
+                      </small>
+                    </span>
+                    <ChevronRight size={17} className="teacher-upcoming-chevron" />
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="teacher-upcoming-empty">
+              <span><CalendarOff size={20} /></span>
+              <div>
+                <strong>近期暂无后续课程</strong>
+                <small>新排课后会显示在这里。</small>
+              </div>
+            </div>
+          )}
         </Card>
 
-        <Card>
-          <div className="card-heading">
-            <div><span className="eyebrow">Teacher pulse</span><h2>教师表现速览</h2></div>
-            <TrendingUp size={20} />
+        <Card className="teacher-mini-calendar-card">
+          <div className="teacher-mini-calendar-head">
+            <div>
+              <span className="eyebrow">Calendar</span>
+              <h2>课程日历</h2>
+            </div>
+            <span className="teacher-mini-calendar-count">本月 {calendarMonthCount} 节</span>
           </div>
-          <div className="capacity-health-list">
-            {teacherRanking.map((teacher) => (
-              <button key={teacher.teacherId} onClick={() => navigate(`/academic/performance/${teacher.teacherId}`)}>
-                <div>
-                  <strong>{teacher.rank ? `#${teacher.rank} ${teacher.teacherName}` : teacher.teacherName}</strong>
-                  <span>{teacher.ranked ? `${teacher.sampleSize} 名学生 · ${teacher.compositeAverage}` : "样本不足"}</span>
-                </div>
-                <ProgressBar value={teacher.compositeAverage ?? 0} tone={teacher.ranked ? "mint" : "neutral"} />
-              </button>
-            ))}
-            {teacherRanking.length === 0 && <EmptyState title="暂无可统计教师" />}
+
+          <div className="teacher-mini-calendar-toolbar">
+            <button
+              type="button"
+              aria-label="上个月"
+              onClick={() => setCalendarCursor(new Date(Date.UTC(calendarYear, calendarMonth - 1, 1)))}
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <strong>{calendarMonthLabel}</strong>
+            <button
+              type="button"
+              aria-label="下个月"
+              onClick={() => setCalendarCursor(new Date(Date.UTC(calendarYear, calendarMonth + 1, 1)))}
+            >
+              <ChevronRight size={16} />
+            </button>
+            <button
+              type="button"
+              className="teacher-mini-calendar-today"
+              onClick={() => {
+                const wallNow = wallDateInZone(state.ui.timeZone);
+                setCalendarCursor(new Date(Date.UTC(wallNow.getUTCFullYear(), wallNow.getUTCMonth(), 1)));
+                setCalendarDate(wallKey(wallNow));
+              }}
+            >
+              今天
+            </button>
           </div>
+
+          <div className="teacher-mini-calendar-weekdays">
+            {calendarWeekdays.map((label, index) => <span key={`${label}-${index}`}>{label}</span>)}
+          </div>
+
+          <div className="teacher-mini-calendar-grid">
+            {calendarDays.map((day) => {
+              const key = wallKey(day);
+              const daySessions = sessionsByDay.get(key) ?? [];
+              const label = fmtWall({ month: "long", day: "numeric", weekday: "long" }).format(day);
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  aria-label={`${label}，${daySessions.length ? `${daySessions.length} 节课` : "没有课程"}`}
+                  className={[
+                    "teacher-mini-calendar-day",
+                    day.getUTCMonth() === calendarMonth ? "" : "outside",
+                    key === todayKey ? "today" : "",
+                    daySessions.length > 0 ? "has-class" : ""
+                  ].filter(Boolean).join(" ")}
+                  onClick={() => openCalendar(key)}
+                >
+                  <span>{day.getUTCDate()}</span>
+                  {daySessions.length > 0 && (
+                    <span className="teacher-mini-calendar-dots" aria-hidden="true">
+                      {daySessions.slice(0, 3).map((session) => (
+                        <i key={session.id} className={new Date(session.endAt).getTime() < now ? "done" : "upcoming"} />
+                      ))}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          <button
+            type="button"
+            className="teacher-mini-calendar-foot"
+            onClick={() => openCalendar(todayKey)}
+          >
+            打开完整课程日历 <ArrowRight size={15} />
+          </button>
         </Card>
       </div>
 
-      <Card className="operator-subsection">
-        <div className="card-heading">
-          <div><span className="eyebrow">Schedule</span><h2>近期课次</h2></div>
-          <Button variant="ghost" size="sm" onClick={() => navigate("/academic/scheduling")}>查看全部 <ArrowRight size={15} /></Button>
-        </div>
-        <div className="attention-list">
-          {upcoming.map((session) => (
-            <button key={session.id} onClick={() => navigate(`/academic/sessions/${session.id}`)}>
-              <span className="attention-dot success" />
-              <span>
-                <strong>{session.title}</strong>
-                <small>{session.className} · {getLesson(state, session.lessonId)?.title}</small>
-              </span>
-              <span className="attention-value">
-                <strong>{getBookedCount(state, session.id)}/{session.capacity}</strong>
-                <ArrowRight size={15} />
-              </span>
-            </button>
-          ))}
-          {upcoming.length === 0 && <EmptyState title="暂无近期课次" />}
-        </div>
-      </Card>
+      <CalendarModal
+        open={calendarOpen}
+        onClose={() => setCalendarOpen(false)}
+        state={state}
+        sessions={published}
+        initialDate={calendarDate}
+        title={`${school?.name ?? "本校"} · 课程日历`}
+        detailSubtitle={(session) => state.users.find((item) => item.id === session.teacherId)?.name ?? ""}
+        renderAction={(session) => (
+          <Button size="sm" variant="soft" onClick={() => { setCalendarOpen(false); setRosterSessionId(session.id); }}>
+            查看名单
+          </Button>
+        )}
+      />
+
+      {rosterSessionId && (
+        <OperatorSessionRosterModal
+          state={state}
+          sessionId={rosterSessionId}
+          actorId={user.id}
+          readOnly
+          onClose={() => setRosterSessionId(null)}
+        />
+      )}
     </>
   );
 }

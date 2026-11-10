@@ -1,32 +1,60 @@
 import type { GradeTrendPoint } from "../lib/gradeAnalytics";
 import { dateInputInTimeZone } from "../lib/gradeAnalytics";
+import { useId } from "react";
+import { useTranslation } from "react-i18next";
 import { EmptyState } from "./ui";
 
 const series = [
-  { key: "composite", label: "综合", color: "#6552ff" },
-  { key: "interaction", label: "互动", color: "#33b99c" },
-  { key: "homework", label: "作业", color: "#f39549" },
-  { key: "exam", label: "考试", color: "#54a8ef" }
+  { key: "composite", labelKey: "gradeChart.composite", color: "#6552ff" },
+  { key: "interaction", labelKey: "gradeChart.interaction", color: "#33b99c" },
+  { key: "homework", labelKey: "gradeChart.homework", color: "#f39549" },
+  { key: "exam", labelKey: "gradeChart.exam", color: "#54a8ef" }
 ] as const;
 
-function linePoints(values: Array<number | null>, width: number, height: number, padding: number) {
+function linePoints(
+  values: Array<number | null>,
+  width: number,
+  height: number,
+  padding: number,
+  domainMin: number,
+  domainMax: number
+) {
   const usableWidth = width - padding * 2;
   const usableHeight = height - padding * 2;
   return values.map((value, index) => {
     if (value === null) return null;
     const x = values.length === 1 ? width / 2 : padding + (index / (values.length - 1)) * usableWidth;
-    const y = padding + ((100 - value) / 100) * usableHeight;
+    const y = padding + ((domainMax - value) / (domainMax - domainMin)) * usableHeight;
     return { x, y, value };
   });
 }
 
-export function GradeTrendChart({ points, timeZone }: { points: GradeTrendPoint[]; timeZone: string }) {
+function axisTicks(lowestScore: number) {
+  const domainMin = Math.max(0, Math.min(80, Math.floor((lowestScore - 5) / 10) * 10));
+  const step = domainMin >= 80 ? 5 : domainMin >= 60 ? 10 : 20;
+  const ticks: number[] = [];
+  for (let value = domainMin; value < 100; value += step) ticks.push(value);
+  ticks.push(100);
+  return ticks;
+}
+
+export function GradeTrendChart({
+  points,
+  timeZone,
+  height = 230
+}: {
+  points: GradeTrendPoint[];
+  timeZone: string;
+  height?: number;
+}) {
+  const { t } = useTranslation();
+  const gradientId = `grade-trend-fill-${useId().replace(/:/g, "")}`;
+
   if (!points.length) {
-    return <EmptyState title="暂无趋势数据" description="产生成绩后，这里会展示不同时间段的成绩变化。" />;
+    return <EmptyState title={t("gradeChart.noTrendTitle")} description={t("gradeChart.noTrendDescription")} />;
   }
 
   const width = 720;
-  const height = 230;
   const padding = 34;
   const values = {
     composite: points.map((point) => point.composite),
@@ -34,17 +62,28 @@ export function GradeTrendChart({ points, timeZone }: { points: GradeTrendPoint[
     homework: points.map((point) => point.categories.homework),
     exam: points.map((point) => point.categories.exam)
   };
+  const availableScores = Object.values(values)
+    .flat()
+    .filter((value): value is number => value !== null);
+  const ticks = axisTicks(availableScores.length ? Math.min(...availableScores) : 0);
+  const domainMin = ticks[0];
 
   return (
     <div className="grade-trend">
       <div className="grade-trend-legend">
         {series.map((item) => (
-          <span key={item.key}><i style={{ background: item.color }} />{item.label}</span>
+          <span key={item.key}><i style={{ background: item.color }} />{t(item.labelKey)}</span>
         ))}
       </div>
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="成绩趋势图">
-        {[0, 25, 50, 75, 100].map((value) => {
-          const y = padding + ((100 - value) / 100) * (height - padding * 2);
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={t("gradeChart.trendAria")}>
+        <defs>
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#6552ff" stopOpacity="0.22" />
+            <stop offset="100%" stopColor="#6552ff" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {ticks.map((value) => {
+          const y = padding + ((100 - value) / (100 - domainMin)) * (height - padding * 2);
           return (
             <g key={value}>
               <line x1={padding} y1={y} x2={width - padding} y2={y} className="grade-trend-grid" />
@@ -53,17 +92,24 @@ export function GradeTrendChart({ points, timeZone }: { points: GradeTrendPoint[
           );
         })}
         {series.map((item) => {
-          const plotted = linePoints(values[item.key], width, height, padding);
-          const path = plotted
-            .filter((point): point is NonNullable<typeof point> => Boolean(point))
+          const plotted = linePoints(values[item.key], width, height, padding, domainMin, 100);
+          const visiblePoints = plotted.filter((point): point is NonNullable<typeof point> => Boolean(point));
+          const path = visiblePoints
             .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
             .join(" ");
+          const firstPoint = visiblePoints[0];
+          const lastPoint = visiblePoints[visiblePoints.length - 1];
+          const baseline = height - padding;
+          const areaPath = item.key === "composite" && visiblePoints.length > 1
+            ? `${path} L ${lastPoint.x} ${baseline} L ${firstPoint.x} ${baseline} Z`
+            : null;
           return (
             <g key={item.key}>
+              {areaPath && <path d={areaPath} fill={`url(#${gradientId})`} />}
               {path && <path d={path} fill="none" stroke={item.color} strokeWidth={item.key === "composite" ? 3 : 2} strokeLinecap="round" strokeLinejoin="round" />}
-              {plotted.filter(Boolean).map((point, index) => (
-                <circle key={`${item.key}-${index}`} cx={point!.x} cy={point!.y} r={item.key === "composite" ? 4 : 3} fill="#fff" stroke={item.color} strokeWidth="2">
-                  <title>{`${item.label} ${point!.value}`}</title>
+              {visiblePoints.map((point, index) => (
+                <circle key={`${item.key}-${index}`} cx={point.x} cy={point.y} r={item.key === "composite" ? 4.5 : 3} fill="#fff" stroke={item.color} strokeWidth="2">
+                  <title>{`${t(item.labelKey)} ${point.value}`}</title>
                 </circle>
               ))}
             </g>

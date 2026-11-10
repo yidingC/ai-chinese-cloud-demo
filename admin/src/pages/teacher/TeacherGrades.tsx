@@ -4,7 +4,8 @@ import { AssessmentQuestionModal } from "../../components/AssessmentQuestionModa
 import { GradeAnalysisCards, GradeDetailsCard } from "../../components/GradeAnalyticsPanels";
 import { GradePeriodPicker } from "../../components/GradePeriodPicker";
 import { Avatar, Badge, Button, Card, EmptyState, Modal, PageHeader, ProgressBar, Select, StatCard, TextInput } from "../../components/ui";
-import type { AssessmentCategory, GradeCategory } from "../../domain/types";
+import type { AssessmentCategory, ClassGroup, GradeCategory, PlatformState } from "../../domain/types";
+import { getAcademicSchoolId, workspaceState } from "../../lib/academicScope";
 import { currentUser } from "../../lib/domain";
 import { formatDateTime } from "../../lib/format";
 import {
@@ -33,9 +34,24 @@ function scoreValue(value: number | null) {
   return value === null ? "--" : value;
 }
 
-export function TeacherGrades() {
-  const state = usePlatformStore((store) => store.state);
-  const user = currentUser(state);
+type GradesVariant = "teacher" | "academic";
+
+export function GradesWorkspace({
+  state,
+  classes,
+  variant,
+  schoolName,
+  teacherId,
+  schoolId
+}: {
+  state: PlatformState;
+  classes: ClassGroup[];
+  variant: GradesVariant;
+  schoolName?: string;
+  teacherId?: string;
+  schoolId?: string;
+}) {
+  const academic = variant === "academic";
   const [range, setRange] = useState(() => defaultGradeRange(state.ui.timeZone));
   const [tab, setTab] = useState<"students" | GradeCategory>("students");
   const [dimension, setDimension] = useState<"student" | "content">("student");
@@ -49,15 +65,16 @@ export function TeacherGrades() {
     setRange((current) => ({ ...current, timeZone: state.ui.timeZone }));
   }, [state.ui.timeZone]);
 
-  const teacherClasses = useMemo(
-    () => state.classes.filter((item) => item.teacherId === user.id),
-    [state.classes, user.id]
-  );
-  const selectedClass = teacherClasses.find((item) => item.id === classId) ?? null;
-  const summaryTitle = selectedClass ? `${selectedClass.name}学生成绩汇总` : "全部学生成绩汇总";
+  const selectedClass = classes.find((item) => item.id === classId) ?? null;
+  const summaryTitle = selectedClass
+    ? `${selectedClass.name}学生成绩汇总`
+    : academic
+      ? `${schoolName ?? "本校"}学生成绩汇总`
+      : "全部学生成绩汇总";
+  const allScopeLabel = academic ? "本校" : "全部";
   const analytics = useMemo(
-    () => buildGradeAnalytics(state, range, { teacherId: user.id, classId: classId || undefined }),
-    [classId, range, state, user.id]
+    () => buildGradeAnalytics(state, range, { teacherId, schoolId, classId: classId || undefined }),
+    [classId, range, schoolId, state, teacherId]
   );
   const filteredStudents = analytics.students.filter((student) => {
     const keyword = query.trim().toLowerCase();
@@ -66,7 +83,9 @@ export function TeacherGrades() {
   const detailStudent = analytics.students.find((item) => item.studentId === detailStudentId) ?? null;
   const bounds = gradeRangeBounds(range);
   const assessments = state.assessments
-    .filter((item) => item.status === "published" && item.teacherId === user.id)
+    .filter((item) => item.status === "published")
+    .filter((item) => !teacherId || item.teacherId === teacherId)
+    .filter((item) => !schoolId || item.schoolId === schoolId)
     .filter((item) => !classId || item.classId === classId)
     .filter((item) => new Date(item.assessedAt).getTime() >= new Date(bounds.startAt).getTime() && new Date(item.assessedAt).getTime() <= new Date(bounds.endAt).getTime())
     .sort((a, b) => new Date(b.assessedAt).getTime() - new Date(a.assessedAt).getTime());
@@ -183,16 +202,19 @@ export function TeacherGrades() {
   return (
     <>
       <PageHeader
-        eyebrow="Student gradebook"
+        eyebrow={academic ? "School gradebook" : "Student gradebook"}
         title="学生成绩"
-        description="按时间范围汇总本人所教学生的互动、作业与考试成绩。"
+        description={academic
+          ? `${schoolName ?? "本校"}全部班级的互动、作业与考试成绩；学校教务只读查看，可按时间、班级或学生筛选。`
+          : "按时间范围汇总本人所教学生的互动、作业与考试成绩。"}
+        actions={academic ? <Badge tone="mint">只读查看</Badge> : undefined}
       />
 
       <Card className="content-filter-bar grade-filter-bar">
         <GradePeriodPicker value={range} onChange={setRange} />
         <Select value={classId} onChange={(event) => setClassId(event.target.value)} aria-label="按班级筛选">
           <option value="">全部班级</option>
-          {teacherClasses.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          {classes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
         </Select>
         <div className="search-box">
           <Search size={16} />
@@ -265,7 +287,7 @@ export function TeacherGrades() {
               </button>
             ))}
           </div>
-          {filteredStudents.length === 0 && <EmptyState title="这段时间没有学生成绩" description="调整时间或班级后重试，也可以发布一项正式考核。" />}
+          {filteredStudents.length === 0 && <EmptyState title="这段时间没有学生成绩" description={academic ? "调整时间或班级后重试；成绩由任课教师录入后自动汇总。" : "调整时间或班级后重试，也可以发布一项正式考核。"} />}
         </Card>
       )}
 
@@ -273,7 +295,7 @@ export function TeacherGrades() {
         <Card className="grade-table-card interaction-grade-table-card">
           <div className="grade-table-heading">
             <div>
-              <h2>{selectedClass ? `${selectedClass.name}互动练习表现` : "全部学生互动练习表现"}</h2>
+              <h2>{selectedClass ? `${selectedClass.name}互动练习表现` : `${allScopeLabel}学生互动练习表现`}</h2>
               <p>每名学生一行；同一互动取时间范围内最好成绩，用时按已完成的互动计算。</p>
             </div>
             <Badge tone="purple">{interactionStudentRows.length} 位学生</Badge>
@@ -344,7 +366,7 @@ export function TeacherGrades() {
         <Card className="grade-table-card assessment-grade-table-card">
           <div className="grade-table-heading">
             <div>
-              <h2>{selectedClass ? `${selectedClass.name}${assessmentLabel}表现` : `全部学生${assessmentLabel}表现`}</h2>
+              <h2>{selectedClass ? `${selectedClass.name}${assessmentLabel}表现` : `${allScopeLabel}学生${assessmentLabel}表现`}</h2>
               <p>每名学生一行；{absenceLabel}按 0 分。</p>
             </div>
             <Badge tone="purple">{assessmentStudentRows.length} 位学生</Badge>
@@ -413,6 +435,58 @@ export function TeacherGrades() {
 
       <AssessmentQuestionModal assessmentId={questionAssessmentId} onClose={() => setQuestionAssessmentId("")} />
     </>
+  );
+}
+
+export function TeacherGrades() {
+  const state = usePlatformStore((store) => store.state);
+  const user = currentUser(state);
+  const classes = useMemo(
+    () => state.classes.filter((item) => item.teacherId === user.id),
+    [state.classes, user.id]
+  );
+  return (
+    <GradesWorkspace
+      state={state}
+      classes={classes}
+      variant="teacher"
+      teacherId={user.id}
+    />
+  );
+}
+
+export function AcademicGrades() {
+  const rawState = usePlatformStore((store) => store.state);
+  const user = currentUser(rawState);
+  const schoolId = getAcademicSchoolId(rawState, user);
+  const state = useMemo(() => workspaceState(rawState, schoolId), [rawState, schoolId]);
+  const classes = useMemo(
+    () => state.classes.filter((item) => item.status === "active"),
+    [state.classes]
+  );
+
+  if (!schoolId) {
+    return (
+      <>
+        <PageHeader
+          eyebrow="School gradebook"
+          title="学生成绩"
+          description="学校教务只能查看所属学校的学生成绩。"
+          actions={<Badge tone="mint">只读查看</Badge>}
+        />
+        <EmptyState title="当前账号未关联学校" description="请联系教学管理配置学校成员关系后再查看成绩。" />
+      </>
+    );
+  }
+
+  return (
+    <GradesWorkspace
+      state={state}
+      classes={classes}
+      variant="academic"
+      schoolId={schoolId}
+      schoolName={state.schools[0]?.name}
+    />
   );
 }
 

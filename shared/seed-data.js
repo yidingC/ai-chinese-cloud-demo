@@ -412,6 +412,7 @@
         endAt: iso(liveEnd),
         capacity: 30,
         status: "published",
+        liveStartedAt: iso(liveStart),
         bookingCloseAt: iso(new Date(liveStart.getTime() + 10 * 60 * 1000)),
         cancelCloseAt: iso(new Date(liveStart.getTime() - 2 * 60 * 60 * 1000)),
         language: "zh-id",
@@ -2086,6 +2087,36 @@
         currentVersionId: "ver-friends-preview-1",
         order: 1,
         updatedAt: iso(addDays(now, -3))
+      },
+      {
+        id: "set-friends-live-hello",
+        lessonId: "lesson-friends",
+        title: "破冰快问",
+        phase: "live",
+        status: "published",
+        currentVersionId: "ver-friends-live-hello-1",
+        order: 1,
+        updatedAt: iso(addDays(now, -1))
+      },
+      {
+        id: "set-friends-live-match",
+        lessonId: "lesson-friends",
+        title: "词语配对",
+        phase: "live",
+        status: "published",
+        currentVersionId: "ver-friends-live-match-1",
+        order: 2,
+        updatedAt: iso(addDays(now, -1))
+      },
+      {
+        id: "set-friends-live-intro",
+        lessonId: "lesson-friends",
+        title: "介绍自己",
+        phase: "live",
+        status: "published",
+        currentVersionId: "ver-friends-live-intro-1",
+        order: 3,
+        updatedAt: iso(addDays(now, -1))
       }
     ];
     interactionSets.forEach((set) => {
@@ -2705,6 +2736,121 @@
             ]
           }
         ]
+      },
+      {
+        id: "ver-friends-live-hello-1",
+        setId: "set-friends-live-hello",
+        version: 1,
+        status: "published",
+        publishedAt: iso(addDays(now, -1)),
+        publishedBy: "teacher-berenice",
+        publishNote: "认识新朋友课节的课堂互动演示。",
+        items: [
+          {
+            id: "item-friends-live-hello-choice",
+            type: "choice",
+            prompt: "第一次见到新同学，哪一句最适合先开口？",
+            explanation: "先问候，再说自己的名字，是最自然的破冰方式。",
+            multiple: false,
+            choices: [
+              { id: "fh-c1", text: "你好，我叫 Kevin。", isCorrect: true },
+              { id: "fh-c2", text: "再见，明天见。", isCorrect: false },
+              { id: "fh-c3", text: "谢谢，不用了。", isCorrect: false }
+            ]
+          },
+          {
+            id: "item-friends-live-hello-dialogue",
+            type: "dialogue",
+            prompt: "选出合适的回答。",
+            explanation: "对方问名字，回答「我叫……」，不要答国家或年龄。",
+            dialogueThem: "你好，你叫什么名字？",
+            dialoguePlaceholder: "？",
+            choices: [
+              { id: "fh-d1", text: "我叫 Kevin。", isCorrect: true },
+              { id: "fh-d2", text: "我是印尼人。", isCorrect: false },
+              { id: "fh-d3", text: "我今年二十岁。", isCorrect: false }
+            ]
+          }
+        ]
+      },
+      {
+        id: "ver-friends-live-match-1",
+        setId: "set-friends-live-match",
+        version: 1,
+        status: "published",
+        publishedAt: iso(addDays(now, -1)),
+        publishedBy: "teacher-berenice",
+        publishNote: "认识新朋友课节的课堂互动演示。",
+        items: [
+          {
+            id: "item-friends-live-match-pairs",
+            type: "match",
+            prompt: "把中文和印尼语意思连起来。",
+            explanation: "先看中文，再找到对应的印尼语。",
+            pairs: [
+              { id: "fm-p1", left: "名字", right: "nama" },
+              { id: "fm-p2", left: "朋友", right: "teman" },
+              { id: "fm-p3", left: "认识", right: "kenal" },
+              { id: "fm-p4", left: "高兴", right: "senang" }
+            ]
+          },
+          {
+            id: "item-friends-live-match-memory",
+            type: "memory",
+            prompt: "翻开卡片，找到中文和印尼语配对。",
+            explanation: "记住卡片位置，把问候语和印尼语意思配成对。",
+            pairs: [
+              { id: "fm-m1", left: "你好", right: "Halo" },
+              { id: "fm-m2", left: "再见", right: "Sampai jumpa" },
+              { id: "fm-m3", left: "谢谢", right: "Terima kasih" },
+              { id: "fm-m4", left: "认识你", right: "Kenal denganmu" }
+            ]
+          }
+        ]
+      },
+      {
+        id: "ver-friends-live-intro-1",
+        setId: "set-friends-live-intro",
+        version: 1,
+        status: "published",
+        publishedAt: iso(addDays(now, -1)),
+        publishedBy: "teacher-berenice",
+        publishNote: "认识新朋友课节的课堂互动演示。",
+        items: [
+          {
+            id: "item-friends-live-intro-order",
+            type: "order",
+            prompt: "把句子排成完整的自我介绍。",
+            explanation: "先问候，再说名字和国家，最后说很高兴认识你。",
+            orderItems: [
+              { id: "fi-o1", text: "你好" },
+              { id: "fi-o2", text: "我叫 Kevin" },
+              { id: "fi-o3", text: "我是印尼人" },
+              { id: "fi-o4", text: "很高兴认识你" }
+            ],
+            correctOrder: ["fi-o1", "fi-o2", "fi-o3", "fi-o4"]
+          },
+          {
+            id: "item-friends-live-intro-speaking",
+            type: "open-qa",
+            prompt: "请向新同学介绍自己：名字、国家，再说很高兴认识你。",
+            explanation: "三句话就能完成一段自然的初次见面自我介绍。",
+            speakingHint: "名字 + 国家 + 问候",
+            speakingWords: [
+              { id: "fi-w1", text: "我叫", pinyin: "wǒ jiào" },
+              { id: "fi-w2", text: "我是印尼人", pinyin: "wǒ shì Yìnírén" },
+              { id: "fi-w3", text: "很高兴认识你", pinyin: "hěn gāoxìng rènshi nǐ" }
+            ],
+            sampleAnswer: "你好，我叫 Kevin，我是印尼人，很高兴认识你。",
+            sampleAnswerPinyin: "Nǐ hǎo, wǒ jiào Kevin, wǒ shì Yìnírén, hěn gāoxìng rènshi nǐ.",
+            samplePattern: "你好，我叫 ______，我是 ______ 人，很高兴认识你。",
+            scores: [
+              { id: "fi-s1", label: "内容", stars: 3 },
+              { id: "fi-s2", label: "完整度", stars: 3 },
+              { id: "fi-s3", label: "发音", stars: 3 }
+            ]
+          }
+        ]
       }
     ];
 
@@ -2716,8 +2862,8 @@
         studentId: "student-anisa",
         sessionId: "session-past",
         phase: "preview",
-        score: 100,
-        bestScore: 100,
+        score: 95,
+        bestScore: 95,
         attempt: 1,
         timeSpentSeconds: 96,
         completedAt: iso(addDays(now, -2)),
@@ -2732,8 +2878,8 @@
         studentId: "student-anisa",
         sessionId: "session-past",
         phase: "live",
-        score: 75,
-        bestScore: 75,
+        score: 98,
+        bestScore: 98,
         attempt: 1,
         timeSpentSeconds: 142,
         completedAt: iso(addDays(now, -1)),
@@ -3052,10 +3198,10 @@
     });
 
     const scoreRows = [
-      ["assessment-homework-greetings-1", "student-anisa", 88, "graded"],
+      ["assessment-homework-greetings-1", "student-anisa", 78, "graded"],
       ["assessment-homework-greetings-1", "student-maya", 76, "graded"],
       ["assessment-homework-greetings-1", "student-raymond", null, "pending"],
-      ["assessment-exam-greetings-1", "student-anisa", 91, "graded"],
+      ["assessment-exam-greetings-1", "student-anisa", 84, "graded"],
       ["assessment-exam-greetings-1", "student-maya", 84, "graded"],
       ["assessment-exam-greetings-1", "student-raymond", 70, "graded"],
       ["assessment-homework-greetings-2", "student-anisa", 18, "graded"],
@@ -3064,7 +3210,7 @@
       ["assessment-exam-greetings-2", "student-anisa", 47, "graded"],
       ["assessment-exam-greetings-2", "student-maya", 38, "graded"],
       ["assessment-exam-greetings-2", "student-raymond", 32, "graded"],
-      ["assessment-homework-greetings-3", "student-anisa", 94, "graded"],
+      ["assessment-homework-greetings-3", "student-anisa", 95, "graded"],
       ["assessment-homework-greetings-3", "student-maya", 88, "graded"],
       ["assessment-homework-greetings-3", "student-raymond", 82, "graded"],
       ["assessment-exam-greetings-3", "student-anisa", 46, "graded"],

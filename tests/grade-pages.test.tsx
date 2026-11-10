@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import App from "../admin/src/App";
 import "../admin/src/i18n";
 import { platform } from "../admin/src/lib/platform";
+import { setTeacherDemoMode } from "../admin/src/lib/teacherLiveDemo";
 import { usePlatformStore } from "../admin/src/store/usePlatformStore";
 
 function refreshAppStore() {
@@ -16,6 +17,7 @@ describe("grade pages and role routes", () => {
 
   afterEach(() => {
     cleanup();
+    setTeacherDemoMode("live");
     window.location.hash = "";
   });
 
@@ -26,6 +28,16 @@ describe("grade pages and role routes", () => {
     render(<App />);
     expect(await screen.findByRole("heading", { name: "学生成绩" })).toBeInTheDocument();
     expect(screen.getAllByText("学生成绩").some((node) => node.tagName === "SPAN")).toBe(true);
+    const sidebar = document.querySelector(".sidebar-nav") as HTMLElement;
+    expect(Array.from(sidebar.querySelectorAll("a > span")).map((node) => node.textContent)).toEqual([
+      "首页",
+      "我的课表",
+      "课程结果",
+      "学生成绩",
+      "材料与互动库",
+      "消息"
+    ]);
+    expect(sidebar.querySelectorAll(".sidebar-nav-group")).toHaveLength(5);
     expect(screen.getByText("综合均分")).toBeInTheDocument();
     expect(screen.getByText("互动均分")).toBeInTheDocument();
     expect(screen.getByText("作业均分")).toBeInTheDocument();
@@ -46,6 +58,24 @@ describe("grade pages and role routes", () => {
     expect(screen.getAllByText("问候复习课").length).toBeGreaterThan(0);
     expect(screen.getAllByText("印尼圣心学校7年级A班").length).toBeGreaterThan(1);
     expect(screen.queryByText("周三晚 A 班 / 印尼圣心学校7年级A班")).not.toBeInTheDocument();
+  });
+
+  it("keeps the classroom action primary on every teacher schedule card", async () => {
+    platform.setCurrentUser("teacher-lina");
+    refreshAppStore();
+    window.location.hash = "#/teacher/schedule";
+    const { container } = render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "我的课表" })).toBeInTheDocument();
+    const cards = [...container.querySelectorAll<HTMLElement>(".teacher-session-list .operator-session-card")];
+    expect(cards.length).toBeGreaterThan(1);
+
+    cards.forEach((card) => {
+      const primary = card.querySelector<HTMLButtonElement>(".operator-session-actions .button-primary");
+      const design = card.querySelector<HTMLButtonElement>(".operator-session-actions .button-soft");
+      expect(primary?.textContent).toMatch(/进入课堂|查看结果/);
+      expect(design?.textContent).toMatch(/备课|查看设计/);
+    });
   });
 
   it("updates the student summary title when a class is selected", async () => {
@@ -135,29 +165,99 @@ describe("grade pages and role routes", () => {
     expect(await screen.findByText("周测 · 问候与餐厅表达")).toBeInTheDocument();
   });
 
-  it("shows recent class results on the teacher dashboard and links to the result page", async () => {
+  it("keeps the teacher dashboard focused on the current task and today's remaining schedule", async () => {
+    setTeacherDemoMode("live");
     platform.setCurrentUser("teacher-lina");
     refreshAppStore();
     window.location.hash = "#/teacher";
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: "最近课程结果" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "最近添加" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /今天有 \d+ 节课/ })).toBeInTheDocument();
+    expect(screen.getByText("正在进行中")).toBeInTheDocument();
+    expect(screen.getByText("去上课")).toBeInTheDocument();
+    expect(screen.queryByText("当前互动")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "下一节课程" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "最近课程结果" })).not.toBeInTheDocument();
+    expect(screen.queryByText("本周课堂")).not.toBeInTheDocument();
+    expect(screen.queryByText("预约学生")).not.toBeInTheDocument();
+  });
 
-    const list = document.querySelector(".recent-content-list") as HTMLElement;
-    const rows = within(list).getAllByRole("button");
-    expect(rows.length).toBeGreaterThan(0);
-    expect(within(rows[0]).getByText("内容完成率")).toBeInTheDocument();
-    expect(within(rows[0]).getByText(/^\d+%$/)).toBeInTheDocument();
-    expect(within(rows[0]).getByText(/人$/)).toBeInTheDocument();
-    // 每行带上课时间与班级
-    expect(within(rows[0]).getByText(/周. /)).toBeInTheDocument();
-    const sessionTitle = rows[0].querySelector("strong")?.textContent ?? "";
+  it("uses the next lesson as the only primary task when no class is in progress", async () => {
+    setTeacherDemoMode("empty");
+    platform.setCurrentUser("teacher-lina");
+    refreshAppStore();
+    window.location.hash = "#/teacher";
+    render(<App />);
 
-    fireEvent.click(rows[0]);
-    await waitFor(() => expect(window.location.hash).toContain("/teacher/results"));
-    expect(await screen.findByRole("heading", { name: "课程结果" })).toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: sessionTitle })).toBeInTheDocument();
+    expect(await screen.findByText("下一节课")).toBeInTheDocument();
+    const nextBanner = document.querySelector(".teacher-next-banner") as HTMLElement;
+    expect(within(nextBanner).getByRole("button", { name: /备课/ })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "下一节课程" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "最近课程结果" })).not.toBeInTheDocument();
+    expect(screen.queryByText("本周课堂")).not.toBeInTheDocument();
+  });
+
+  it("keeps the live room available after the class has ended", async () => {
+    setTeacherDemoMode("live");
+    platform.setCurrentUser("teacher-berenice");
+    platform.startSession({ sessionId: "session-8b-past", actorId: "teacher-berenice" });
+    platform.endSession({ sessionId: "session-8b-past", actorId: "teacher-berenice" });
+    refreshAppStore();
+    window.location.hash = "#/teacher/live/session-8b-past";
+    render(<App />);
+
+    expect(await screen.findByRole("button", { name: "查看完整课堂结果" })).toBeInTheDocument();
+    expect(screen.queryByText("本课已结束")).not.toBeInTheDocument();
+    expect(screen.queryByText("待完成轮次")).not.toBeInTheDocument();
+    expect(document.querySelector(".live-class-room-card")).not.toBeNull();
+    expect(screen.getAllByRole("button", { name: "进入直播间" })).toHaveLength(1);
+    expect(screen.getByText("课堂流程")).toBeInTheDocument();
+    expect(document.querySelector(".live-class-workspace-grid")).not.toBeNull();
+    expect(document.querySelector(".live-class-flow-list")).not.toBeNull();
+    expect(screen.getAllByText("情景演练 · 看图与对话").length).toBeGreaterThan(0);
+    expect(screen.queryByText("课堂动态")).not.toBeInTheDocument();
+    expect(screen.queryByText("实时互动进度")).not.toBeInTheDocument();
+    expect(screen.queryByText("当前正确率")).not.toBeInTheDocument();
+    expect(screen.queryByText("平均分")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "进入直播间" }));
+    const liveRoom = await screen.findByRole("dialog", { name: "课堂直播间" });
+    expect(within(liveRoom).getByRole("tab", { name: /课堂课件/ })).toBeInTheDocument();
+    fireEvent.click(within(liveRoom).getByRole("button", { name: "关闭" }));
+    expect(screen.queryByRole("dialog", { name: "课堂直播间" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "返回我的课表" }));
+    await waitFor(() => expect(window.location.hash).toContain("/teacher/schedule"));
+    expect(await screen.findByRole("heading", { name: "我的课表" })).toBeInTheDocument();
+  });
+
+  it("links upcoming classes into the focused schedule and opens the calendar from a date", async () => {
+    setTeacherDemoMode("live");
+    platform.setCurrentUser("teacher-berenice");
+    refreshAppStore();
+    window.location.hash = "#/teacher";
+    render(<App />);
+
+    const firstUpcoming = await waitFor(() => {
+      const row = document.querySelector<HTMLButtonElement>(".teacher-upcoming-list > button");
+      expect(row).not.toBeNull();
+      return row!;
+    });
+    fireEvent.click(firstUpcoming);
+
+    await waitFor(() => expect(window.location.hash).toContain("/teacher/schedule"));
+    expect(await screen.findByRole("heading", { name: "我的课表" })).toBeInTheDocument();
+    await waitFor(() => expect(document.querySelector(".operator-session-card.is-focused")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("link", { name: "首页" }));
+    expect(await screen.findByRole("heading", { name: /今天有 \d+ 节课|今天没有排课/ })).toBeInTheDocument();
+
+    const classDay = document.querySelector<HTMLButtonElement>(".teacher-mini-calendar-day.has-class:not(.today)");
+    expect(classDay).not.toBeNull();
+    fireEvent.click(classDay!);
+
+    await waitFor(() => expect(window.location.hash).toContain("/teacher/schedule"));
+    expect(await screen.findByRole("dialog", { name: "课程日历" })).toBeInTheDocument();
   });
 
   it("shows the student grade statistics page", async () => {
@@ -172,7 +272,7 @@ describe("grade pages and role routes", () => {
     expect(screen.getByRole("tab", { name: /作业/ })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /考试/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "能力雷达" })).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "六维能力雷达图" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Radar kemampuan enam dimensi" })).toBeInTheDocument();
     expect(screen.getByText("分数均经过归一化计算")).toBeInTheDocument();
     expect(screen.getByText(/项待公布/)).toBeInTheDocument();
     expect(screen.getAllByText("听力").length).toBeGreaterThan(0);
@@ -188,13 +288,23 @@ describe("grade pages and role routes", () => {
     expect(within(radarTooltip).getByText("不计入能力雷达")).toBeInTheDocument();
   });
 
-  it("redirects the legacy student results route to the new grade page", async () => {
+  it("shows the student classroom performance page from the results route", async () => {
     platform.setCurrentUser("student-anisa");
     refreshAppStore();
     window.location.hash = "#/student/results";
     render(<App />);
-    expect(await screen.findByRole("heading", { name: "成绩统计" })).toBeInTheDocument();
-    await waitFor(() => expect(window.location.hash).toBe("#/student/grades"));
+    expect(await screen.findByRole("heading", { name: "Performa kelas" })).toBeInTheDocument();
+    expect(window.location.hash).toBe("#/student/results");
+
+    const sidebar = document.querySelector(".sidebar-nav") as HTMLElement;
+    expect(Array.from(sidebar.querySelectorAll("a > span")).map((node) => node.textContent)).toEqual([
+      "Beranda",
+      "Jadwal saya",
+      "Performa kelas",
+      "Statistik nilai",
+      "Notifikasi"
+    ]);
+    expect(sidebar.querySelectorAll(".sidebar-nav-group")).toHaveLength(4);
   });
 
   it("uses student-facing status labels for homework records", async () => {
@@ -210,5 +320,25 @@ describe("grade pages and role routes", () => {
     expect(screen.queryByText("缺考")).not.toBeInTheDocument();
     expect(screen.queryByText("已录入")).not.toBeInTheDocument();
     expect(screen.queryByText("待录入")).not.toBeInTheDocument();
+  });
+
+  it("keeps the teacher course results workspace working after the shared analytics refactor", async () => {
+    const state = platform.getState();
+    const completed = state.sessions
+      .filter(
+        (session) =>
+          session.teacherId === "teacher-lina"
+          && new Date(session.endAt).getTime() < Date.now()
+      )
+      .sort((a, b) => new Date(b.startAt).getTime() - new Date(a.startAt).getTime())[0];
+
+    platform.setCurrentUser("teacher-lina");
+    refreshAppStore();
+    window.location.hash = "#/teacher/results";
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "课程结果" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 2, name: completed.title })).toBeInTheDocument();
+    expect(screen.queryByText("只读查看")).not.toBeInTheDocument();
   });
 });

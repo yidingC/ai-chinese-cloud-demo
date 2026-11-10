@@ -1,4 +1,5 @@
 import type { SkillRadarDimension } from "../lib/gradeAnalytics";
+import { useTranslation } from "react-i18next";
 
 const width = 300;
 const height = 246;
@@ -25,6 +26,8 @@ function polygonPoints(dimensions: SkillRadarDimension[], valueForDimension: (di
 }
 
 export function SkillRadarChart({ dimensions }: { dimensions: SkillRadarDimension[] }) {
+  const { t } = useTranslation();
+
   if (!dimensions.length) return null;
 
   const plotted = dimensions.map((dimension, index) => {
@@ -37,7 +40,7 @@ export function SkillRadarChart({ dimensions }: { dimensions: SkillRadarDimensio
   });
 
   return (
-    <svg className="skill-radar-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="六维能力雷达图">
+    <svg className="skill-radar-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={t("gradeChart.radarAria")}>
       <g className="skill-radar-grid">
         {gridLevels.map((level) => (
           <polygon key={level} points={polygonPoints(dimensions, () => level)} />
@@ -51,7 +54,7 @@ export function SkillRadarChart({ dimensions }: { dimensions: SkillRadarDimensio
       <polygon className="skill-radar-area" points={polygonPoints(dimensions, (dimension) => (dimension.score ?? 0) / 100)} />
       {plotted.map(({ dimension, point }) => (
         <circle key={dimension.key} className="skill-radar-dot" cx={point.x} cy={point.y} r="3.2">
-          <title>{`${dimension.label} ${dimension.score ?? "--"}`}</title>
+          <title>{`${t(`gradeChart.${dimension.key}`)} ${dimension.score ?? "--"}`}</title>
         </circle>
       ))}
 
@@ -63,7 +66,7 @@ export function SkillRadarChart({ dimensions }: { dimensions: SkillRadarDimensio
           y={labelPoint.y + labelY}
           textAnchor={anchor}
         >
-          <tspan x={labelPoint.x}>{dimension.label}</tspan>
+          <tspan x={labelPoint.x}>{t(`gradeChart.${dimension.key}`)}</tspan>
           <tspan className="skill-radar-value" x={labelPoint.x} dy="11">{dimension.score ?? "--"}</tspan>
         </text>
       ))}

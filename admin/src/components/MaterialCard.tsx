@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { Download, Eye, FileAudio, FileImage, FileText, FileVideo, Link2, Pause, Play, PlayCircle, Presentation } from "lucide-react";
 import type { Material } from "../domain/types";
 import { Badge, Button } from "./ui";
@@ -23,6 +24,7 @@ export function MaterialCard({
   playing?: boolean;
   showVersion?: boolean;
 }) {
+  const { t } = useTranslation();
   const Icon =
     material.fileType === "pptx"
       ? Presentation
@@ -57,32 +59,32 @@ export function MaterialCard({
       <div className="material-copy">
         <div className="material-title-row">
           <strong>{material.title}</strong>
-          {material.status !== "published" && <Badge tone="danger">已下架</Badge>}
+          {material.status !== "published" && <Badge tone="danger">{t("student.materialCard.unpublished")}</Badge>}
         </div>
         <p>{material.description}</p>
         <div className="material-meta">
           {showVersion && <span>v{material.currentVersion}</span>}
-          <span>{current?.sizeLabel ?? "外链"}</span>
+          <span>{current?.sizeLabel ?? t("student.materialCard.externalLink")}</span>
         </div>
       </div>
       <div className="material-actions">
         {isAudio && onPlay && (
           <Button size="sm" variant="ghost" onClick={onPlay}>
-            {playing ? <Pause size={15} /> : <Play size={15} />} {playing ? "暂停" : "播放"}
+            {playing ? <Pause size={15} /> : <Play size={15} />} {playing ? t("student.materialCard.pause") : t("student.materialCard.play")}
           </Button>
         )}
         {onView ? (
           <>
             <Button size="sm" variant="soft" onClick={onView}>
-              <Eye size={16} /> 查看
+              <Eye size={16} /> {t("student.materialCard.view")}
             </Button>
             {canDownload ? (
               <Button
                 size="sm"
                 variant="ghost"
                 className="material-icon-button"
-                aria-label={`下载 ${material.title}`}
-                title="下载"
+                aria-label={`${t("student.materialCard.download")} ${material.title}`}
+                title={t("student.materialCard.download")}
                 onClick={downloadMaterial}
               >
                 <Download size={16} />
@@ -92,8 +94,8 @@ export function MaterialCard({
                 size="sm"
                 variant="ghost"
                 className="material-icon-button"
-                aria-label={`打开链接 ${material.title}`}
-                title="打开链接"
+                aria-label={`${t("student.materialCard.openLink")} ${material.title}`}
+                title={t("student.materialCard.openLink")}
                 onClick={() => window.open(material.externalUrl, "_blank", "noopener,noreferrer")}
               >
                 <Link2 size={16} />
@@ -103,21 +105,21 @@ export function MaterialCard({
         ) : material.kind === "courseware" && onOpen ? (
           <>
             <Button size="sm" variant="primary" onClick={onOpen}>
-              <PlayCircle size={16} /> 播放课件
+              <PlayCircle size={16} /> {t("student.materialCard.playCourseware")}
             </Button>
             {current?.url && (
               <Button size="sm" variant="ghost" onClick={downloadMaterial}>
-                <Download size={15} /> 下载
+                <Download size={15} /> {t("student.materialCard.download")}
               </Button>
             )}
           </>
         ) : material.kind === "file" || current?.url ? (
           <Button size="sm" variant="soft" onClick={downloadMaterial}>
-            <Download size={16} /> 下载
+            <Download size={16} /> {t("student.materialCard.download")}
           </Button>
         ) : (
           <Button size="sm" variant="soft" onClick={() => window.open(material.externalUrl, "_blank", "noopener,noreferrer")}>
-            <Link2 size={16} /> 打开
+            <Link2 size={16} /> {t("student.materialCard.open")}
           </Button>
         )}
         {actions}

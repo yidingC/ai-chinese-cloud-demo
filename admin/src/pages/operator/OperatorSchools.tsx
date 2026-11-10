@@ -61,8 +61,6 @@ export function OperatorSchools() {
   const [pendingLifecycle, setPendingLifecycle] = useState<PendingSchoolLifecycle | null>(null);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<SchoolStatusFilter>("active");
-  const normalSchoolCount = state.schools.filter((school) => school.status === "active").length;
-  const archivedSchoolCount = state.schools.filter((school) => school.status === "archived").length;
 
   const filteredSchools = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -97,13 +95,13 @@ export function OperatorSchools() {
           value={statusFilter}
           onChange={(event) => setStatusFilter(event.target.value as SchoolStatusFilter)}
         >
-          <option value="active">正常（{normalSchoolCount}）</option>
-          <option value="archived">已停用（{archivedSchoolCount}）</option>
-          <option value="all">全部（{state.schools.length}）</option>
+          <option value="active">启用中</option>
+          <option value="archived">已停用</option>
+          <option value="all">全部学校</option>
         </Select>
         <div className="school-directory-actions">
           <span className="school-directory-count">
-            显示 <strong>{filteredSchools.length}</strong> / {state.schools.length} 所
+            当前 <strong>{filteredSchools.length}</strong> 所学校
           </span>
           <Button onClick={() => setEditor("new")}><Plus size={17} /> 新建学校</Button>
         </div>
@@ -133,7 +131,10 @@ export function OperatorSchools() {
           const canDelete = !schoolHasDependencies(state, school.id);
 
           return (
-            <Card className="school-management-card" key={school.id}>
+            <Card
+              className={`school-management-card${school.status === "archived" ? " is-archived" : ""}`}
+              key={school.id}
+            >
               <div className="school-card-head">
                 <span className={`school-mark school-mark-${schoolMarkTone(school.code)}`} aria-hidden="true">
                   {school.code.slice(0, 2).toUpperCase()}

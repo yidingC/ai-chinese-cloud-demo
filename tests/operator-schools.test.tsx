@@ -70,7 +70,7 @@ describe("operator school staff workspace", () => {
       `${classCount}进行中班级`
     ]);
     expect(metrics).not.toHaveTextContent("学生");
-    expect(screen.getByRole("combobox", { name: "学校状态" })).toHaveTextContent("正常");
+    expect(screen.getByRole("combobox", { name: "学校状态" })).toHaveTextContent("启用中");
     expect(screen.getByRole("combobox", { name: "学校状态" })).toHaveTextContent("已停用");
   });
 
@@ -131,7 +131,7 @@ describe("operator school staff workspace", () => {
     fireEvent.change(search, { target: { value: target.code.toLowerCase() } });
     await waitFor(() => expect(visibleSchoolNames()).toEqual([target.name]));
     expect(document.querySelector(".school-directory-count")).toHaveTextContent(
-      new RegExp(`显示\\s*1\\s*/\\s*${state.schools.length}\\s*所`)
+      /当前\s*1\s*所学校/
     );
 
     fireEvent.change(search, { target: { value: "" } });

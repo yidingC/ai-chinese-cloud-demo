@@ -50,23 +50,33 @@ describe("interaction editor", () => {
     expect(refreshed[0].textContent).toContain("编辑中");
   });
 
-  it("keeps the full-set phone preview reachable from the design list", async () => {
+  it("renames a round inline and hides redundant round controls", async () => {
     await openDesignPage();
-    fireEvent.click(screen.getAllByRole("button", { name: "预览" })[0]);
+    const titleInput = screen
+      .getAllByRole("textbox")
+      .find((input) => input.getAttribute("aria-label")?.startsWith("轮次名称："))!;
+    const originalTitle = (titleInput as HTMLInputElement).value;
+    const targetSet = platform.getState().interactionSets.find((set) => set.title === originalTitle)!;
 
-    const preview = await screen.findByRole("dialog", { name: /学生端预览 · / });
-    const shell = preview.querySelector(".student-preview-phone") as HTMLElement;
-    const screens = preview.querySelector(".student-preview-screen") as HTMLElement;
-    expect(shell).toBeTruthy();
-    expect(within(shell).getByText("1 / 2")).toBeInTheDocument();
-    // 没作答之前「下一题」是禁用的
-    expect(within(shell).getByRole("button", { name: "下一题" })).toBeDisabled();
+    expect(screen.queryByText("2 题 · 全课次共用")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /配置轮次/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /编辑轮次/ })).not.toBeInTheDocument();
 
-    // 点第一个选项（不同课次的第一题选项文案不同，按类名取更稳）
-    const firstOption = screens.querySelector(".choice-player-item") as HTMLElement;
-    fireEvent.click(firstOption);
-    fireEvent.click(within(screens).getByRole("button", { name: "提交本题" }));
-    fireEvent.click(within(shell).getByRole("button", { name: "下一题" }));
-    expect(within(shell).getByText("2 / 2")).toBeInTheDocument();
+    fireEvent.change(titleInput, { target: { value: "打招呼热身" } });
+    fireEvent.blur(titleInput);
+
+    const renamed = platform.getState().interactionSets.find((set) => set.id === targetSet.id)!;
+    expect(renamed.title).toBe("打招呼热身");
+  });
+
+  it("opens with the classroom interaction demo and an explicit save action", async () => {
+    await openDesignPage();
+
+    expect(screen.getByDisplayValue("破冰快问")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("词语配对")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("介绍自己")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(await screen.findByRole("button", { name: "已保存" })).toBeInTheDocument();
   });
 });

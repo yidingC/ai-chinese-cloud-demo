@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { ChevronLeft, ChevronRight, GraduationCap } from "lucide-react";
 import type { ClassSession, PlatformState } from "../domain/types";
 import { getLesson, getUser } from "../lib/domain";
@@ -34,6 +35,18 @@ function wallKey(date: Date) {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
 }
 
+function wallDateFromKey(value?: string) {
+  if (!value) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]) - 1;
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month || date.getUTCDate() !== day) return null;
+  return date;
+}
+
 function buildMonthGrid(monthAnchor: Date) {
   const year = monthAnchor.getUTCFullYear();
   const month = monthAnchor.getUTCMonth();
@@ -53,7 +66,8 @@ export function CalendarModal({
   onClose,
   state,
   sessions,
-  title = "课程日历",
+  initialDate,
+  title,
   detailSubtitle,
   monthNote,
   renderAction
@@ -62,11 +76,13 @@ export function CalendarModal({
   onClose: () => void;
   state: PlatformState;
   sessions: ClassSession[];
+  initialDate?: string;
   title?: string;
   detailSubtitle?: (session: ClassSession) => ReactNode;
   monthNote?: (count: number) => string;
   renderAction: (session: ClassSession) => ReactNode;
 }) {
+  const { t } = useTranslation();
   const timeZone = state.ui.timeZone;
   const language = state.ui.language;
   const [cursor, setCursor] = useState(() => toWallClock(new Date(), timeZone));
@@ -74,9 +90,10 @@ export function CalendarModal({
 
   useEffect(() => {
     if (!open) return;
-    setCursor(toWallClock(new Date(), timeZone));
-    setSelectedKey(wallKey(toWallClock(new Date(), timeZone)));
-  }, [open, timeZone]);
+    const focusDate = wallDateFromKey(initialDate) ?? toWallClock(new Date(), timeZone);
+    setCursor(new Date(Date.UTC(focusDate.getUTCFullYear(), focusDate.getUTCMonth(), 1)));
+    setSelectedKey(wallKey(focusDate));
+  }, [open, timeZone, initialDate]);
 
   const sessionsByDay = useMemo(() => {
     const map = new Map<string, ClassSession[]>();
@@ -108,16 +125,16 @@ export function CalendarModal({
   return (
     <Modal
       open={open}
-      title={title}
+      title={title ?? t("calendar.title")}
       onClose={onClose}
       width="980px"
       footer={
         <div className="calendar-legend">
           <span>
-            <i className="legend-dot done" /> 已结束
+            <i className="legend-dot done" /> {t("calendar.ended")}
           </span>
           <span>
-            <i className="legend-dot upcoming" /> 待上课
+            <i className="legend-dot upcoming" /> {t("calendar.upcoming")}
           </span>
         </div>
       }
@@ -128,19 +145,19 @@ export function CalendarModal({
             <Button
               size="icon"
               variant="ghost"
-              aria-label="上个月"
+              aria-label={t("calendar.previousMonth")}
               onClick={() => setCursor((value) => new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth() - 1, 1)))}
             >
               <ChevronLeft size={18} />
             </Button>
             <div>
               <strong>{monthTitle}</strong>
-              <small>{monthNote ? monthNote(monthCount) : `本月 ${monthCount} 节课`}</small>
+              <small>{monthNote ? monthNote(monthCount) : t("calendar.monthCount", { count: monthCount })}</small>
             </div>
             <Button
               size="icon"
               variant="ghost"
-              aria-label="下个月"
+              aria-label={t("calendar.nextMonth")}
               onClick={() => setCursor((value) => new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth() + 1, 1)))}
             >
               <ChevronRight size={18} />
@@ -154,7 +171,7 @@ export function CalendarModal({
                 setSelectedKey(wallKey(now));
               }}
             >
-              今天
+              {t("calendar.today")}
             </Button>
           </div>
 
@@ -207,7 +224,7 @@ export function CalendarModal({
               <span className="eyebrow">Selected day</span>
               <h3>{fmtWall({ month: "long", day: "numeric", weekday: "long" }).format(selectedDate)}</h3>
             </div>
-            <Badge tone={selectedSessions.length ? "purple" : "blue"}>{selectedSessions.length} 节课</Badge>
+            <Badge tone={selectedSessions.length ? "purple" : "blue"}>{t("calendar.sessionCount", { count: selectedSessions.length })}</Badge>
           </div>
 
           <div className="calendar-session-list">
@@ -229,15 +246,15 @@ export function CalendarModal({
                       {detailSubtitle ? <> · {detailSubtitle(session)}</> : <> · {teacher?.name}</>}
                     </small>
                     <div className="calendar-session-tags">
-                      <Badge tone={ended ? "blue" : "mint"}>{ended ? "已结束" : "待上课"}</Badge>
-                      {session.source === "series" && <Badge tone="purple">系列班</Badge>}
+                      <Badge tone={ended ? "blue" : "mint"}>{ended ? t("calendar.ended") : t("calendar.upcoming")}</Badge>
+                      {session.source === "series" && <Badge tone="purple">{t("calendar.series")}</Badge>}
                     </div>
                   </div>
                   {renderAction(session)}
                 </article>
               );
             })}
-            {selectedSessions.length === 0 && <p className="muted-copy">这一天没有课程安排。</p>}
+            {selectedSessions.length === 0 && <p className="muted-copy">{t("calendar.noSessions")}</p>}
           </div>
         </div>
       </div>

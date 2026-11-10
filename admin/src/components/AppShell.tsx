@@ -16,12 +16,10 @@ import {
   GraduationCap,
   Home,
   LibraryBig,
-  ListRestart,
   Menu,
   Radio,
   ShieldCheck,
   Sparkles,
-  Trophy,
   Users,
   X
 } from "lucide-react";
@@ -46,47 +44,53 @@ const navIcons = {
   students: Users,
   schools: Building2,
   governance: ShieldCheck,
-  performance: Trophy,
-  audit: ListRestart,
   notifications: Bell
 };
 
-function navItems(role: Role, t: (key: string) => string) {
+type SidebarNavItem = {
+  to: string;
+  end?: boolean;
+  key: string;
+  label: string;
+  group?: string;
+};
+
+function navItems(role: Role, t: (key: string) => string): SidebarNavItem[] {
   if (role === "student") {
     return [
-      { to: "/student", end: true, key: "dashboard", label: t("nav.dashboard") },
-      { to: "/student/book", key: "booking", label: t("nav.booking") },
-      { to: "/student/schedule", key: "schedule", label: t("nav.schedule") },
-      { to: "/student/grades", key: "grades", label: t("nav.grades") },
-      { to: "/notifications", key: "dashboard", label: t("common.notifications") }
+      { to: "/student", end: true, key: "dashboard", label: t("nav.dashboard"), group: "dashboard" },
+      { to: "/student/schedule", key: "schedule", label: t("nav.schedule"), group: "schedule" },
+      { to: "/student/results", key: "results", label: t("nav.academicResults"), group: "results" },
+      { to: "/student/grades", key: "grades", label: t("nav.grades"), group: "results" },
+      { to: "/notifications", key: "dashboard", label: t("common.notifications"), group: "notifications" }
     ];
   }
   if (role === "teacher") {
     return [
-      { to: "/teacher", end: true, key: "dashboard", label: t("nav.dashboard") },
-      { to: "/teacher/schedule", key: "schedule", label: t("nav.schedule") },
-      { to: "/teacher/materials", key: "materials", label: t("nav.materials") },
-      { to: "/teacher/results", key: "results", label: t("nav.results") },
-      { to: "/teacher/grades", key: "grades", label: t("nav.studentGrades") },
-      { to: "/notifications", key: "dashboard", label: t("common.notifications") }
+      { to: "/teacher", end: true, key: "dashboard", label: t("nav.dashboard"), group: "dashboard" },
+      { to: "/teacher/schedule", key: "schedule", label: t("nav.schedule"), group: "schedule" },
+      { to: "/teacher/results", key: "results", label: t("nav.results"), group: "results" },
+      { to: "/teacher/grades", key: "grades", label: t("nav.studentGrades"), group: "results" },
+      { to: "/teacher/materials", key: "materials", label: t("nav.materials"), group: "materials" },
+      { to: "/notifications", key: "dashboard", label: t("common.notifications"), group: "notifications" }
     ];
   }
   if (role === "academic") {
     return [
-      { to: "/academic", end: true, key: "dashboard", label: t("nav.dashboard") },
-      { to: "/academic/scheduling", key: "scheduling", label: t("nav.scheduling") },
-      { to: "/academic/students", key: "students", label: t("nav.students") },
-      { to: "/academic/performance", key: "performance", label: t("nav.performance") },
-      { to: "/academic/audit", key: "audit", label: t("nav.audit") },
-      { to: "/notifications", key: "dashboard", label: t("common.notifications") }
+      { to: "/academic", end: true, key: "dashboard", label: t("nav.dashboard"), group: "dashboard" },
+      { to: "/academic/scheduling", key: "scheduling", label: t("nav.academicCalendar"), group: "schedule" },
+      { to: "/academic/students", key: "students", label: t("nav.academicStudents"), group: "students" },
+      { to: "/academic/results", key: "results", label: t("nav.academicResults"), group: "results" },
+      { to: "/academic/grades", key: "grades", label: t("nav.studentGrades"), group: "results" },
+      { to: "/notifications", key: "dashboard", label: t("common.notifications"), group: "notifications" }
     ];
   }
   return [
-    { to: "/operator", end: true, key: "dashboard", label: t("nav.dashboard") },
-    { to: "/operator/scheduling", key: "scheduling", label: t("nav.scheduling") },
-    { to: "/operator/students", key: "students", label: t("nav.students") },
-    { to: "/operator/schools", key: "schools", label: t("nav.schools") },
-    { to: "/operator/catalog", key: "catalog", label: t("nav.catalog") }
+    { to: "/operator", end: true, key: "dashboard", label: t("nav.dashboard"), group: "dashboard" },
+    { to: "/operator/scheduling", key: "scheduling", label: t("nav.scheduling"), group: "scheduling" },
+    { to: "/operator/students", key: "students", label: t("nav.students"), group: "people" },
+    { to: "/operator/schools", key: "schools", label: t("nav.schools"), group: "people" },
+    { to: "/operator/catalog", key: "catalog", label: t("nav.catalog"), group: "catalog" }
   ];
 }
 
@@ -139,6 +143,44 @@ export function AppShell() {
     navigate(roleHome(next.role));
   }
 
+  const usesGroupedSidebar = role === "operator" || role === "teacher" || role === "academic" || role === "student";
+  const sidebarGroups = usesGroupedSidebar
+    ? items.reduce<Array<{ key: string; items: SidebarNavItem[] }>>((groups, item) => {
+        const key = item.group ?? item.to;
+        const existing = groups.find((group) => group.key === key);
+        if (existing) existing.items.push(item);
+        else groups.push({ key, items: [item] });
+        return groups;
+      }, [])
+    : [{ key: "main", items }];
+
+  function renderNavItem(item: SidebarNavItem) {
+    const Icon = navIcons[item.key as keyof typeof navIcons] ?? Home;
+    const isNotification = item.to === "/notifications";
+    const link = (
+      <NavLink to={item.to} end={item.end}>
+        <Icon size={18} />
+        <span>{item.label}</span>
+        {isNotification && unread > 0 && <b className="nav-count">{unread}</b>}
+      </NavLink>
+    );
+    const itemKey = `${item.to}-${item.label}`;
+    if (role === "teacher" && item.to === "/teacher/schedule") {
+      return (
+        <PmNote
+          key={itemKey}
+          block
+          kind="注意"
+          className="sidebar-nav-note sidebar-nav-note-highlight"
+          note="一期最重要的是做课中互动里的「添加互动设计」。保存发布后，学生端会在上课时实时调用。"
+        >
+          {link}
+        </PmNote>
+      );
+    }
+    return <Fragment key={itemKey}>{link}</Fragment>;
+  }
+
   return (
     <div className={`admin-layout ${state.ui.sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       <aside className={`sidebar ${mobileOpen ? "mobile-open" : ""}`}>
@@ -166,46 +208,12 @@ export function AppShell() {
           <Badge tone={role === "teacher" ? "orange" : role === "operator" ? "blue" : role === "academic" ? "mint" : "purple"}>{t(`common.${role}`)}</Badge>
         </div>
 
-        <nav className="sidebar-nav">
-          {items.map((item) => {
-            const Icon = navIcons[item.key as keyof typeof navIcons] ?? Home;
-            const isNotification = item.to === "/notifications";
-            const link = (
-              <NavLink to={item.to} end={item.end}>
-                <Icon size={18} />
-                <span>{item.label}</span>
-                {isNotification && unread > 0 && <b className="nav-count">{unread}</b>}
-              </NavLink>
-            );
-            const itemKey = `${item.to}-${item.label}`;
-            if (role === "teacher" && item.to === "/teacher/schedule") {
-              return (
-                <PmNote
-                  key={itemKey}
-                  block
-                  kind="注意"
-                  className="sidebar-nav-note sidebar-nav-note-highlight"
-                  note="一期最重要的是做课中互动里的「添加互动设计」。保存发布后，学生端会在上课时实时调用。"
-                >
-                  {link}
-                </PmNote>
-              );
-            }
-            if (item.to === "/student/book") {
-              return (
-                <PmNote
-                  key={itemKey}
-                  block
-                  kind="注意"
-                  className="sidebar-nav-note"
-                  note="整套报名约课流程可以先不做，现阶段先了解产品逻辑。"
-                >
-                  {link}
-                </PmNote>
-              );
-            }
-            return <Fragment key={itemKey}>{link}</Fragment>;
-          })}
+        <nav className={`sidebar-nav ${usesGroupedSidebar ? "is-grouped" : ""}`}>
+          {sidebarGroups.map((group) => (
+            usesGroupedSidebar
+              ? <div key={group.key} className="sidebar-nav-group">{group.items.map(renderNavItem)}</div>
+              : <Fragment key={group.key}>{group.items.map(renderNavItem)}</Fragment>
+          ))}
         </nav>
 
         <div className="sidebar-footer">

@@ -187,6 +187,10 @@ export interface ClassSession {
   source: "single" | "series";
   /** 本次课单独的应到名单；建课时从班级成员生成，之后不随班级自动变化。 */
   roster?: SessionRosterEntry[];
+  /** 老师在课堂里点「开始上课」的时间；之后课次进入进行中。 */
+  liveStartedAt?: string;
+  /** 老师在课堂里点「结束课堂」的时间；之后课次进入已结束。 */
+  liveEndedAt?: string;
   /** 预约后需要教学管理审核，审核通过才占用名额并加入班级。 */
   approvalRequired?: boolean;
   cancelledAt?: string;
@@ -615,6 +619,8 @@ export interface PlatformStoreApi {
   createSession(input: Partial<ClassSession> & { title: string; lessonId: string; teacherId: string; startAt: string; endAt: string; capacity: number; actorId?: string; reason?: string }): StoreResult<ClassSession>;
   createSeries(input: { title: string; description?: string; className?: string; classId?: string; folderId?: string; lessonIds: string[]; sessionSchedule?: Array<{ lessonId: string; startAt: string }>; teacherId: string; startAt: string; intervalWeeks: number; durationMinutes: number; capacity: number; roomLabel?: string; schoolId?: string; actorId?: string; reason?: string }): StoreResult<ClassSeries>;
   updateSession(input: { sessionId: string; patch: Partial<ClassSession>; actorId?: string; reason?: string }): StoreResult<ClassSession>;
+  startSession(input: { sessionId: string; actorId: string }): StoreResult<ClassSession>;
+  endSession(input: { sessionId: string; actorId: string }): StoreResult<ClassSession>;
   syncSessionRoster(input: { sessionId: string; actorId?: string }): StoreResult<SessionRosterEntry[]>;
   addSessionRosterStudents(input: { sessionId: string; studentIds: string[]; actorId?: string }): StoreResult<SessionRosterEntry[]>;
   removeSessionRosterStudent(input: { sessionId: string; studentId: string; actorId?: string }): StoreResult<SessionRosterEntry[]>;
@@ -637,6 +643,7 @@ export interface PlatformStoreApi {
   setLessonStatus(input: { lessonId: string; status: CourseStatus; actorId?: string }): StoreResult<Lesson>;
   deleteLesson(input: { lessonId: string; actorId?: string }): StoreResult<Lesson>;
   moveLesson(input: { lessonId: string; direction: "up" | "down"; actorId?: string }): StoreResult<Lesson[]>;
+  reorderLesson(input: { lessonId: string; targetIndex: number; actorId?: string }): StoreResult<Lesson[]>;
   createStudent(input: { name: string; phone?: string; timeZone?: string; locale?: string; program?: string; level?: string; className?: string; learningGoal?: string; preferredTeacherId?: string; schoolId?: string; actorId?: string }): StoreResult<{ user: PlatformUser; profile: StudentProfile }>;
   addMockMaterial(input: { title: string; description: string; fileType?: string; language?: string; ownerId?: string; phase?: Phase; lessonId?: string; fileName?: string; sizeLabel?: string }): StoreResult<Material>;
   attachMaterial(input: { materialId: string; lessonId: string; phase: Phase; order?: number; sessionIds?: string[]; actorId?: string }): StoreResult<Material>;

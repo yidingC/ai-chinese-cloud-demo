@@ -640,7 +640,7 @@ export function buildGradeAnalytics(state: PlatformState, range: GradeDateRange,
     const studentRecords = records.filter((item) => item.studentId === studentId);
     const categories = categorySummary(studentRecords, policy);
     const classIds = orderedClassIdsForStudent(studentId, state, studentClassIds(studentId, state).filter((classId) => {
-      if (!scope.classId && !scope.teacherId) return true;
+      if (!scope.classId && !scope.teacherId && !scope.schoolId) return true;
       const enrollment = state.classEnrollments.find((item) => item.classId === classId && item.studentId === studentId);
       return enrollment ? enrollmentMatchesScope(enrollment, scope, state) : false;
     }));
