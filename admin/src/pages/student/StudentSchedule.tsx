@@ -5,7 +5,6 @@ import { BarChart3, CalendarDays, GraduationCap, MapPin, PlayCircle, RotateCcw, 
 import { usePlatformStore } from "../../store/usePlatformStore";
 import {
   currentUser,
-  getBookedCount,
   getLesson,
   getSession,
   getStudentPendingReviewBookings,
@@ -33,13 +32,13 @@ function shortDateLabel(session: ClassSession, state: PlatformState) {
 }
 
 function sessionTiming(session: ClassSession, pendingReview: boolean) {
-  if (pendingReview) return { labelKey: "student.schedule.statusPending", tone: "orange" as const, history: false };
+  if (pendingReview) return { key: "pending", labelKey: "student.schedule.statusPending", tone: "orange" as const, history: false };
   const now = Date.now();
   const start = new Date(session.startAt).getTime();
   const end = new Date(session.endAt).getTime();
-  if (now < start) return { labelKey: "student.schedule.statusNotStarted", tone: "blue" as const, history: false };
-  if (now <= end) return { labelKey: "student.schedule.statusLive", tone: "mint" as const, history: false };
-  return { labelKey: "student.schedule.statusEnded", tone: "neutral" as const, history: true };
+  if (now < start) return { key: "upcoming", labelKey: "student.schedule.statusNotStarted", tone: "blue" as const, history: false };
+  if (now <= end) return { key: "live", labelKey: "student.schedule.statusLive", tone: "mint" as const, history: false };
+  return { key: "ended", labelKey: "student.schedule.statusEnded", tone: "neutral" as const, history: true };
 }
 
 function StudentSessionCard({
@@ -59,59 +58,70 @@ function StudentSessionCard({
 }) {
   const { t } = useTranslation();
   const lesson = getLesson(state, session.lessonId);
+  const course = lesson
+    ? state.folders.find((folder) => folder.id === lesson.folderId)
+    : undefined;
   const teacher = getUser(state, session.teacherId);
   const timing = sessionTiming(session, pendingReview);
-  const booked = getBookedCount(state, session.id);
+  const rosterSize = session.roster?.length ?? 0;
 
   return (
-    <article className={`student-session-card ${timing.history ? "is-history" : "is-upcoming"}`}>
-      <span className="student-session-accent" style={{ background: lesson?.color ?? "var(--purple)" }} />
-
-      <div className="student-session-time">
-        <span className="student-session-tz">{timeZoneLabel(state.ui.timeZone)}</span>
-        <strong>{shortDateLabel(session, state)}</strong>
-        <b>{formatRange(session.startAt, session.endAt, state.ui.timeZone, state.ui.language)}</b>
-      </div>
-
-      <div className="student-session-main">
-        <h3>{session.title}</h3>
-        <p className="student-session-topic">{lesson?.subtitle || lesson?.title || t("student.schedule.contentFallback")}</p>
-        <div className="student-session-meta">
-          <span><GraduationCap size={15} /> {session.className}</span>
-          <span><UsersRound size={15} /> {t("student.schedule.enrolled", { count: booked })}</span>
-          <span><MapPin size={15} /> {session.roomLabel}</span>
+    <article className={`class-session-card student-session-card ${timing.history ? "is-history" : "is-upcoming"}`}>
+      <span className="session-color" style={{ background: lesson?.color ?? "var(--purple)" }} />
+      <div className="operator-session-main">
+        <div className="operator-session-time">
+          <span className="operator-session-zone">{timeZoneLabel(state.ui.timeZone)}</span>
+          <span className="operator-session-date">{shortDateLabel(session, state)}</span>
+          <strong>{formatRange(session.startAt, session.endAt, state.ui.timeZone, state.ui.language)}</strong>
         </div>
-        {teacher && (
-          <div className="student-session-teacher">
-            <Avatar label={teacher.avatar} size="sm" tone="orange" />
-            <span>
-              <strong>{teacher.name}</strong>
-              <small>{t("student.schedule.teacher")}</small>
+        <div className="operator-session-copy">
+          <div className="operator-session-heading">
+            <h3>{session.title}</h3>
+            <Badge
+              tone={timing.tone}
+              className={`operator-session-status operator-session-status-${timing.key}`}
+            >
+              {t(timing.labelKey)}
+            </Badge>
+          </div>
+          <p className="operator-session-course">
+            {course?.name || lesson?.subtitle || lesson?.title || t("student.schedule.contentFallback")}
+          </p>
+          <p className="operator-session-class"><GraduationCap size={14} /> {session.className}</p>
+          <div className="operator-session-meta">
+            {teacher && (
+              <span className="operator-session-teacher">
+                <Avatar label={teacher.avatar} size="sm" tone="orange" />
+                <strong>{teacher.name}</strong>
+              </span>
+            )}
+            <span className="operator-session-count">
+              <UsersRound size={15} /> {t("student.schedule.enrolled", { count: rosterSize })}
+            </span>
+            <span className="operator-session-room">
+              <MapPin size={15} /> <strong>{session.roomLabel}</strong>
             </span>
           </div>
-        )}
+        </div>
       </div>
 
-      <div className="student-session-side">
-        <Badge tone={timing.tone}>{t(timing.labelKey)}</Badge>
-        <div className="student-session-actions">
-          {pendingReview ? (
-            <span className="student-session-hint">{t("student.schedule.pendingHint")}</span>
-          ) : timing.history ? (
-            <>
-              <Button variant="soft" onClick={onReview}>
-                <RotateCcw size={16} /> {t("student.review")}
-              </Button>
-              <Button variant="secondary" onClick={onPerformance}>
-                <BarChart3 size={16} /> {t("student.schedule.viewPerformance")}
-              </Button>
-            </>
-          ) : (
-            <Button onClick={onPreview}>
-              <PlayCircle size={16} /> {t("student.prep")}
+      <div className="session-actions operator-session-actions student-session-actions">
+        {pendingReview ? (
+          <span className="student-session-hint">{t("student.schedule.pendingHint")}</span>
+        ) : timing.history ? (
+          <>
+            <Button size="sm" variant="primary" onClick={onReview}>
+              <RotateCcw size={16} /> {t("student.review")}
             </Button>
-          )}
-        </div>
+            <Button size="sm" variant="secondary" onClick={onPerformance}>
+              <BarChart3 size={16} /> {t("student.schedule.viewPerformance")}
+            </Button>
+          </>
+        ) : (
+          <Button size="sm" variant="primary" onClick={onPreview}>
+            <PlayCircle size={16} /> {t("student.prep")}
+          </Button>
+        )}
       </div>
     </article>
   );

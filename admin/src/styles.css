@@ -5304,6 +5304,12 @@ strong {
   background: #edf7ff;
 }
 
+.operator-session-status-pending {
+  border-color: #f1d3ae;
+  color: #a35d00;
+  background: #fff7ec;
+}
+
 .operator-session-status-live {
   border-color: #a9e4d3;
   color: #0c7d61;
