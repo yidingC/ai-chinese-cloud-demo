@@ -1,130 +1,17 @@
 <!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#f7f7fc">
-  <title>AI Chinese Cloud · 学习端原型</title>
-  <link rel="icon" href="favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css">
-</head>
-<body data-page="home">
-  <div class="app-shell">
-    <div class="status-bar" aria-hidden="true">
-      <span>11:20</span>
-      <span class="status-icons">5G <span class="battery"></span></span>
-    </div>
-
-    <main class="page">
-      <header class="home-intro">
-        <div>
-          <div class="brand-kicker">AI Chinese Cloud</div>
-          <h1 class="brand-title">今天也要开心学中文</h1>
-        </div>
-        <div class="student-chip">
-          <span class="student-avatar">安</span>
-          <span>Anisa</span>
-        </div>
-      </header>
-
-      <section class="hero-scene" aria-label="和老师聊天">
-        <div class="hero-gate" aria-hidden="true">
-          <span class="hero-roof"></span>
-          <span class="hero-gate-sign">学堂</span>
-          <span class="hero-gate-pillars"></span>
-        </div>
-        <span class="hero-bamboo left" aria-hidden="true"></span>
-        <span class="hero-bamboo right" aria-hidden="true"></span>
-        <div class="hero-panda-wrap" aria-hidden="true">
-          <span class="hero-panda">🐼</span>
-        </div>
-        <button type="button" class="teacher-cta" data-demo-feature>和老师聊天 ✨</button>
-      </section>
-
-      <section class="quick-section" aria-label="常用功能">
-        <div class="quick-scroll">
-          <button type="button" class="quick-card classroom-entry" data-classroom-entry>
-            <span class="quick-status" data-home-status>课中</span>
-            <span class="quick-icon special" aria-hidden="true">✦<span>💬</span></span>
-            <span class="quick-label">课堂互动</span>
-            <span class="quick-caption" data-home-classroom-label>进入互动</span>
-          </button>
-
-          <button type="button" class="quick-card" data-demo-feature>
-            <span class="quick-icon" aria-hidden="true">🧩</span>
-            <span class="quick-label">定制课程</span>
-            <span class="quick-caption">专属学习</span>
-          </button>
-
-          <button type="button" class="quick-card" data-demo-feature>
-            <span class="quick-icon" aria-hidden="true">🅰️</span>
-            <span class="quick-label">拼音</span>
-            <span class="quick-caption">声母韵母</span>
-          </button>
-
-          <button type="button" class="quick-card" data-demo-feature>
-            <span class="quick-icon" aria-hidden="true">📘</span>
-            <span class="quick-label">课后作业</span>
-            <span class="quick-caption">及时复习</span>
-          </button>
-
-          <button type="button" class="quick-card" data-demo-feature>
-            <span class="quick-icon" aria-hidden="true">✍️</span>
-            <span class="quick-label">汉字</span>
-            <span class="quick-caption">认读书写</span>
-          </button>
-
-          <button type="button" class="quick-card" data-demo-feature>
-            <span class="quick-icon" aria-hidden="true">🌟</span>
-            <span class="quick-label">学习奖励</span>
-            <span class="quick-caption">收集星星</span>
-          </button>
-        </div>
-        <div class="scroll-dots" aria-hidden="true"><span></span><span></span><span></span></div>
-      </section>
-
-      <section class="section-block">
-        <div class="section-heading">
-          <div>
-            <h2>场景对话</h2>
-            <p>Percakapan sehari-hari</p>
-          </div>
-          <button type="button" class="text-link" data-demo-feature>查看全部</button>
-        </div>
-
-        <div class="scene-chips" aria-label="对话分类">
-          <span class="scene-chip active">🔥 推荐</span>
-          <span class="scene-chip">👋 问候</span>
-          <span class="scene-chip">🕒 时间</span>
-          <span class="scene-chip">🏫 校园</span>
-        </div>
-
-        <article class="lesson-card">
-          <span class="lesson-badge">LESSON 1 · 今日大班课</span>
-          <h3>嗨！你好！</h3>
-          <p class="lesson-sub">Halo! Belajar salam dan waktu dalam bahasa Mandarin.</p>
-          <div class="lesson-phrases">
-            <span>你好 · Halo</span>
-            <span>早上 · Pagi</span>
-            <span>再见 · Sampai jumpa</span>
-          </div>
-          <button type="button" class="lesson-action" data-platform-lesson>进入今天的课堂互动 →</button>
-        </article>
-      </section>
-    </main>
-
-    <nav class="bottom-nav" aria-label="主导航">
-      <button type="button" class="nav-item active" aria-current="page"><span class="nav-icon">🐼</span><span>AI</span></button>
-      <button type="button" class="nav-item"><span class="nav-icon">🌸</span><span>实验功能</span></button>
-      <button type="button" class="nav-item"><span class="nav-icon">👤</span><span>真人</span></button>
-      <button type="button" class="nav-item"><span class="nav-icon">◷</span><span>我的</span></button>
-    </nav>
-  </div>
-
-  <script type="module" src="shared/seed-data.js"></script>
-  <script type="module" src="shared/activity-types.js"></script>
-  <script type="module" src="shared/activity-fab.js"></script>
-  <script type="module" src="shared/platform-store.js"></script>
-  <script type="module" src="app.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#6552ff" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta http-equiv="refresh" content="0; url=./admin/" />
+    <title>AI Chinese · 课堂管理后台</title>
+    <script>
+      window.location.replace("./admin/");
+    </script>
+  </head>
+  <body>
+    <p>正在进入 <a href="./admin/">AI Chinese 课堂管理后台</a>…</p>
+  </body>
 </html>

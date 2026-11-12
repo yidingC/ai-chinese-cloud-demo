@@ -16,3 +16,6 @@ mockup-*
 
 # playwright-cli 本地会话日志（只在本机调试用）
 .playwright-cli/
+
+# Codex 本地截图与调试产物
+.codex/
