@@ -1,13 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Clock3, Layers3 } from "lucide-react";
+import { Layers3 } from "lucide-react";
 import type { InteractionItem, InteractionSet, InteractionTemplate, Phase } from "../domain/types";
 import { platform } from "../lib/platform";
 import { usePlatformStore } from "../store/usePlatformStore";
 import { getCurrentInteractionVersion, getLesson } from "../lib/domain";
-import { Button, Card, Field, Modal, Select, TextInput } from "./ui";
+import { Button, Card, EmptyState, Field, Modal, Select, Tabs, TextInput } from "./ui";
 import { InteractionEditor, createInteractionItem } from "./InteractionEditor";
 import { InteractionTemplatePicker, templateToItem } from "./InteractionTemplatePicker";
+import { StudentPhonePreview } from "./InteractionPlayer";
 import { PmNote } from "./PmNote";
 
 const phaseLabels: Record<Phase, string> = { preview: "课前预习", live: "课中互动", review: "课后复习" };
@@ -25,10 +26,13 @@ export function InteractionSetEditorModal({
   defaultLessonId,
   defaultPhase = "live",
   lockLesson = false,
+  scope = "lesson",
   teacherId,
   pendingSessionIds = [],
+  copyTarget,
   presetItems,
   presetTitle,
+  initialView = "design",
   onClose
 }: {
   open: boolean;
@@ -38,21 +42,30 @@ export function InteractionSetEditorModal({
   defaultPhase?: Phase;
   /** 从课堂设计页进入时锁定课节，避免误改到别的课节。 */
   lockLesson?: boolean;
+  /** library = 编辑互动库母版；lesson = 编辑课节副本。 */
+  scope?: "library" | "lesson";
   teacherId: string;
   /** 保存后自动配置到这些课次。 */
   pendingSessionIds?: string[];
+  /** 互动库新建后，顺手复制到指定课节 / 课次。 */
+  copyTarget?: { lessonId: string; phase: Phase; sessionIds?: string[] };
   /** 用模板新建：预填题目与标题。 */
   presetItems?: InteractionItem[];
   presetTitle?: string;
+  /** 从互动库点「预览」进入时直接落在学生预览；默认设计视图。 */
+  initialView?: "design" | "preview";
   onClose: () => void;
 }) {
   const { t } = useTranslation();
   const { state, run } = usePlatformStore();
+  const libraryMode = scope === "library";
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
+  const [view, setView] = useState<"design" | "preview">(initialView);
   const [form, setForm] = useState({
     lessonId: defaultLessonId ?? state.lessons[0]?.id ?? "",
     phase: defaultPhase,
     title: "",
+    tags: "",
     publishNote: ""
   });
   const [items, setItems] = useState<InteractionItem[]>([]);
@@ -61,6 +74,10 @@ export function InteractionSetEditorModal({
   const [countsTowardGrade, setCountsTowardGrade] = useState(true);
   const [assignmentScope, setAssignmentScope] = useState<"session" | "lesson">("session");
 
+  useLayoutEffect(() => {
+    if (open) setView(initialView);
+  }, [open, set?.id, initialView]);
+
   useEffect(() => {
     if (!open) return;
     setAssignmentScope("session");
@@ -68,18 +85,20 @@ export function InteractionSetEditorModal({
     if (set) {
       const version = getCurrentInteractionVersion(state, set);
       setForm({
-        lessonId: set.lessonId,
+        lessonId: libraryMode ? "" : set.lessonId,
         phase: set.phase,
         title: set.title,
+        tags: (set.tags ?? []).join("，"),
         publishNote: ""
       });
       setItems(version ? structuredClone(version.items) : []);
       setCountsTowardGrade(set.countsTowardGrade ?? defaultCountsTowardGrade(version?.items ?? []));
     } else {
       setForm({
-        lessonId: defaultLessonId ?? state.lessons[0]?.id ?? "",
+        lessonId: libraryMode ? "" : (defaultLessonId ?? state.lessons[0]?.id ?? ""),
         phase: defaultPhase,
         title: presetTitle ?? "",
+        tags: "",
         publishNote: ""
       });
       const nextItems = presetItems ? structuredClone(presetItems) : [createInteractionItem("choice")];
@@ -100,9 +119,13 @@ export function InteractionSetEditorModal({
         platform.saveInteractionSet({
           setId: set?.id,
           lessonId: form.lessonId,
+          scope,
           title: form.title,
           phase: form.phase,
           items,
+          tags: libraryMode
+            ? form.tags.split(/[,，]/u).map((tag) => tag.trim()).filter(Boolean)
+            : undefined,
           countsTowardGrade,
           actorId: teacherId,
           publishNote: form.publishNote
@@ -111,11 +134,24 @@ export function InteractionSetEditorModal({
     );
     if (!result.ok) return;
     const savedSet = result.data?.set;
-    if (pendingSessionIds.length && savedSet) {
+    if (!libraryMode && pendingSessionIds.length && savedSet) {
       const assignedSessionIds = assignmentScope === "session" ? pendingSessionIds : [];
       run(
         () => platform.assignInteractionSessions({ setId: savedSet.id, sessionIds: assignedSessionIds, actorId: teacherId }),
         assignmentScope === "session" ? "已配置到本节课" : "已配置到该课节全部课次"
+      );
+    }
+    if (libraryMode && copyTarget && savedSet) {
+      run(
+        () =>
+          platform.copyInteractionSetToLesson({
+            setId: savedSet.id,
+            lessonId: copyTarget.lessonId,
+            phase: copyTarget.phase,
+            sessionIds: copyTarget.sessionIds ?? [],
+            actorId: teacherId
+          }),
+        "已复制到课节"
       );
     }
     onClose();
@@ -128,45 +164,85 @@ export function InteractionSetEditorModal({
         title={set ? t("teacher.editInteraction") : t("teacher.createInteraction")}
         onClose={onClose}
         headerExtra={
-          <PmNote
-            kind="规则"
-            note="保存后会发布为一个新版本，并按预习 / 课中 / 复习的顺序出现在学生端对应阶段；版本回滚由内容治理处理。"
-          >
-            <span className="editor-phase-pill">
-              <Clock3 size={15} /> 当前阶段 · {phaseLabels[form.phase]}
-            </span>
-          </PmNote>
+          <Tabs
+            value={view}
+            onChange={(value) => setView(value as "design" | "preview")}
+            items={[
+              { value: "design", label: "设计" },
+              { value: "preview", label: "学生预览" }
+            ]}
+            compact
+          />
         }
         width="1180px"
         footer={
-          <div className="modal-footer-split">
-            <span>
-              {items.length} 个互动题目
-              {!set && pendingSessionIds.length > 0 && ` · ${assignmentScope === "session" ? "仅配置到本节课" : "配置到该课节全部课次"}`}
-            </span>
-            <div>
-              <Button variant="ghost" onClick={onClose}>取消</Button>
-              <PmNote kind="流程" note="点击后生成新的不可变版本并立即切换为学生当前版本；历史版本仍可追溯。">
-                <Button onClick={save}>{t("common.publish")}</Button>
-              </PmNote>
+          view === "preview" ? (
+            <div className="modal-footer-split">
+              <span>{items.length} 个互动题目 · 学生预览</span>
+              <div>
+                <Button variant="ghost" onClick={onClose}>关闭</Button>
+                <Button variant="secondary" onClick={() => setView("design")}>返回设计</Button>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="modal-footer-split">
+              <span>
+                {items.length} 个互动题目
+                {!libraryMode && !set && pendingSessionIds.length > 0 && ` · ${assignmentScope === "session" ? "仅配置到本节课" : "配置到该课节全部课次"}`}
+              </span>
+              <div>
+                <Button variant="ghost" onClick={onClose}>取消</Button>
+                <PmNote
+                  kind="流程"
+                  note={libraryMode
+                    ? "点击后生成互动库里的新版本；不会直接出现在课堂，已经复制到课节的副本也不受影响。"
+                    : "点击后生成新的不可变版本并立即切换为学生当前版本；历史版本仍可追溯。"}
+                >
+                  <Button onClick={save}>{t("common.publish")}</Button>
+                </PmNote>
+              </div>
+            </div>
+          )
         }
       >
+        {view === "preview" ? (
+          <div className="editor-preview-view">
+            <div className="editor-preview-stage">
+              <span className="editor-preview-caption">
+                {phaseLabels[form.phase]} · 学生端预览 · {items.length} 道题
+              </span>
+              {items.length > 0 ? (
+                <StudentPhonePreview items={items} />
+              ) : (
+                <EmptyState
+                  title="这一轮还没有题目"
+                  description="回到设计里加一道题，再来预览学生端效果。"
+                  action={<Button onClick={() => setView("design")}>返回设计</Button>}
+                />
+              )}
+            </div>
+          </div>
+        ) : (
         <div className="editor-page-layout">
           <div className="editor-main-column">
             <Card className="editor-meta-card">
               <div className="editor-grid">
-                <Field label="所属课节">
-                  {lockLesson ? (
-                    <div className="editor-static-field">{lesson?.coverEmoji} {lesson?.title}</div>
-                  ) : (
-                    <Select value={form.lessonId} onChange={(event) => setForm((value) => ({ ...value, lessonId: event.target.value }))}>
-                      {state.lessons.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
-                    </Select>
-                  )}
-                </Field>
-                <Field label="学习阶段">
+                {libraryMode ? (
+                  <Field label="内容归属">
+                    <div className="editor-static-field">互动库 · 可被任意课节复制</div>
+                  </Field>
+                ) : (
+                  <Field label="所属课节">
+                    {lockLesson ? (
+                      <div className="editor-static-field">{lesson?.coverEmoji} {lesson?.title}</div>
+                    ) : (
+                      <Select value={form.lessonId} onChange={(event) => setForm((value) => ({ ...value, lessonId: event.target.value }))}>
+                        {state.lessons.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
+                      </Select>
+                    )}
+                  </Field>
+                )}
+                <Field label={libraryMode ? "推荐阶段" : "学习阶段"}>
                   <Select value={form.phase} onChange={(event) => setForm((value) => ({ ...value, phase: event.target.value as Phase }))}>
                     <option value="preview">课前预习</option>
                     <option value="live">课中互动</option>
@@ -176,6 +252,15 @@ export function InteractionSetEditorModal({
                 <Field label="互动标题" className="field-span-2">
                   <TextInput value={form.title} onChange={(event) => setForm((value) => ({ ...value, title: event.target.value }))} placeholder="例如：问候热身" />
                 </Field>
+                {libraryMode && (
+                  <Field label="标签" className="field-span-2">
+                    <TextInput
+                      value={form.tags}
+                      onChange={(event) => setForm((value) => ({ ...value, tags: event.target.value }))}
+                      placeholder="用逗号分隔，例如：餐厅，口语，预习"
+                    />
+                  </Field>
+                )}
                 <label className="grade-count-toggle field-span-2">
                   <input type="checkbox" checked={countsTowardGrade} onChange={(event) => setCountsTowardGrade(event.target.checked)} />
                   <span><strong>计入学生成绩</strong><small>开启后，该互动的最高分进入“互动练习”分类；投票和语音占位互动默认关闭。</small></span>
@@ -186,7 +271,7 @@ export function InteractionSetEditorModal({
                   </PmNote>
                 </Field>
               </div>
-              {!set && pendingSessionIds.length > 0 && (
+              {!libraryMode && !set && pendingSessionIds.length > 0 && (
                 <div className="scope-choice editor-scope-choice">
                   <button type="button" className={assignmentScope === "session" ? "active" : ""} onClick={() => setAssignmentScope("session")}>
                     仅配置于此课次
@@ -199,8 +284,8 @@ export function InteractionSetEditorModal({
             </Card>
             <Card className="editor-template-bar">
               <div>
-                <strong>从模板库引用</strong>
-                <span>素材库共有 {state.interactionTemplates.length} 套预制模板，按题型 / 主题 / 难度挑选后可直接改内容。</span>
+                <strong>从单题模板插入</strong>
+                <span>素材库共有 {state.interactionTemplates.length} 道单题模板，挑一道插入当前互动后可直接改内容。</span>
               </div>
               <PmNote kind="流程" note="点击后复制一套模板到当前互动，原模板不发生变化。">
                 <Button variant="secondary" onClick={() => setTemplatePickerOpen(true)}>
@@ -216,6 +301,7 @@ export function InteractionSetEditorModal({
             />
           </div>
         </div>
+        )}
       </Modal>
 
       <InteractionTemplatePicker

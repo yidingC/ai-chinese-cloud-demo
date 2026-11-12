@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { GraduationCap, MapPin, UsersRound } from "lucide-react";
+import { BookOpen, GraduationCap, MapPin, UsersRound } from "lucide-react";
 import type { ClassSession, PlatformState } from "../domain/types";
 import { getLesson, getSchoolTimeZone, getUser, sessionRuntimeStatus } from "../lib/domain";
 import { formatRange, timeZoneLabel } from "../lib/format";
@@ -24,12 +24,14 @@ export function OperatorSessionCard({
   state,
   session,
   actions,
-  focused = false
+  focused = false,
+  onViewDesign
 }: {
   state: PlatformState;
   session: ClassSession;
   actions?: ReactNode;
   focused?: boolean;
+  onViewDesign?: () => void;
 }) {
   const lesson = getLesson(state, session.lessonId);
   const course = lesson
@@ -63,30 +65,39 @@ export function OperatorSessionCard({
           <strong>{formatRange(session.startAt, session.endAt, timeZone, state.ui.language)}</strong>
         </div>
         <div className="operator-session-copy">
-          <div className="operator-session-heading">
-            <h3>{lesson?.title ?? session.title}</h3>
-            <Badge
-              tone={status.tone}
-              className={`operator-session-status operator-session-status-${status.key}`}
-            >
-              {status.label}
-            </Badge>
+          <div className="operator-session-primary">
+            <div className="operator-session-heading">
+              <h3>{lesson?.title ?? session.title}</h3>
+              <Badge
+                tone={status.tone}
+                className={`operator-session-status operator-session-status-${status.key}`}
+              >
+                {status.label}
+              </Badge>
+            </div>
+            {course && <p className="operator-session-course">{course.name}</p>}
+            <p className="operator-session-class"><GraduationCap size={14} /> {session.className}</p>
           </div>
-          {course && <p className="operator-session-course">{course.name}</p>}
-          <p className="operator-session-class"><GraduationCap size={14} /> {session.className}</p>
-          <div className="operator-session-meta">
-            {teacher && (
-              <span className="operator-session-teacher">
-                <Avatar label={teacher.avatar} size="sm" tone="orange" />
-                <strong>{teacher.name}</strong>
+          <div className="operator-session-footer">
+            <div className="operator-session-meta">
+              {teacher && (
+                <span className="operator-session-teacher">
+                  <Avatar label={teacher.avatar} size="sm" tone="orange" />
+                  <strong>{teacher.name}</strong>
+                </span>
+              )}
+              <span className="operator-session-count">
+                <UsersRound size={15} /> 应到 <strong>{rosterSize}</strong> 人
               </span>
+              <span className="operator-session-room">
+                <MapPin size={15} /> <strong>{session.roomLabel?.trim() || "未指定"}</strong>
+              </span>
+            </div>
+            {onViewDesign && (
+              <button type="button" className="operator-session-design-link" onClick={onViewDesign}>
+                <BookOpen size={14} /> 查看备课
+              </button>
             )}
-            <span className="operator-session-count">
-              <UsersRound size={15} /> 应到 <strong>{rosterSize}</strong> 人
-            </span>
-            <span className="operator-session-room">
-              <MapPin size={15} /> <strong>{session.roomLabel?.trim() || "未指定"}</strong>
-            </span>
           </div>
         </div>
       </div>

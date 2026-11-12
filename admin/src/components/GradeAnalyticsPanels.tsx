@@ -109,6 +109,8 @@ export function GradeAnalysisCards({
   pendingCount,
   pendingLabel,
   radarDescription = "综合所选时间范围内的线上答题、互动与考核得分，估算六项能力表现。",
+  showTrend = true,
+  showComposition = true,
   className = ""
 }: {
   trend: GradeTrendPoint[];
@@ -119,6 +121,9 @@ export function GradeAnalysisCards({
   pendingCount?: number;
   pendingLabel?: string;
   radarDescription?: string;
+  /** 单课次视角下没有趋势与成绩构成，按需隐藏。 */
+  showTrend?: boolean;
+  showComposition?: boolean;
   className?: string;
 }) {
   const strongestSkill = [...skillRadar]
@@ -127,13 +132,15 @@ export function GradeAnalysisCards({
 
   return (
     <div className={`student-grade-layout grade-analysis-cards ${className}`}>
-      <Card className="student-grade-trend-card">
-        <div className="card-heading">
-          <div><span className="eyebrow">Score trend</span><h2>成绩趋势</h2></div>
-          <TrendingUp size={21} />
-        </div>
-        <GradeTrendChart points={trend} timeZone={timeZone} />
-      </Card>
+      {showTrend && (
+        <Card className="student-grade-trend-card">
+          <div className="card-heading">
+            <div><span className="eyebrow">Score trend</span><h2>成绩趋势</h2></div>
+            <TrendingUp size={21} />
+          </div>
+          <GradeTrendChart points={trend} timeZone={timeZone} />
+        </Card>
+      )}
 
       <Card className="student-grade-radar-card">
         <div className="card-heading">
@@ -148,29 +155,31 @@ export function GradeAnalysisCards({
         </div>
       </Card>
 
-      <Card className="student-grade-composition">
-        <div className="card-heading">
-          <div><span className="eyebrow">Composition</span><h2>成绩构成</h2></div>
-          <BarChart3 size={21} />
-        </div>
-        <p>综合成绩只使用当前范围内有有效成绩的类别，缺失类别会自动重新分配权重。</p>
-        <div className="grade-composition-list">
-          {compositionMeta.map((item) => {
-            const category = categories[item.category];
-            return (
-              <div key={item.category}>
-                <div><span>{item.label}</span><strong>{scoreValue(category.average)}</strong><small>权重 {category.weight}%</small></div>
-                <ProgressBar value={category.average ?? 0} tone={item.tone} />
-              </div>
-            );
-          })}
-        </div>
-        {pendingLabel && (
-          <div className="grade-personal-note">
-            <Badge tone={pendingCount ? "orange" : "mint"}>{pendingCount ?? 0} {pendingLabel}</Badge>
+      {showComposition && (
+        <Card className="student-grade-composition">
+          <div className="card-heading">
+            <div><span className="eyebrow">Composition</span><h2>成绩构成</h2></div>
+            <BarChart3 size={21} />
           </div>
-        )}
-      </Card>
+          <p>综合成绩只使用当前范围内有有效成绩的类别，缺失类别会自动重新分配权重。</p>
+          <div className="grade-composition-list">
+            {compositionMeta.map((item) => {
+              const category = categories[item.category];
+              return (
+                <div key={item.category}>
+                  <div><span>{item.label}</span><strong>{scoreValue(category.average)}</strong><small>权重 {category.weight}%</small></div>
+                  <ProgressBar value={category.average ?? 0} tone={item.tone} />
+                </div>
+              );
+            })}
+          </div>
+          {pendingLabel && (
+            <div className="grade-personal-note">
+              <Badge tone={pendingCount ? "orange" : "mint"}>{pendingCount ?? 0} {pendingLabel}</Badge>
+            </div>
+          )}
+        </Card>
+      )}
     </div>
   );
 }

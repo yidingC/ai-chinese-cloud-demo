@@ -12,7 +12,7 @@ describe("academic affairs role and school isolation", () => {
     platform.resetDemo();
   });
 
-  it("allows only own-school student intake and denies every operational write", () => {
+  it("allows own-school class and student intake while denying edits and operational writes", () => {
     platform.setCurrentUser("operator-ray");
     const outsiderResult = platform.createSchoolStaff({
       schoolId: "school-hope",
@@ -31,6 +31,9 @@ describe("academic affairs role and school isolation", () => {
       (item) => item.schoolId === SCHOOL_ID && item.role === "student" && item.status === "active"
     )!;
     const ownSession = before.sessions.find((item) => item.schoolId === SCHOOL_ID)!;
+    const ownTeacher = before.schoolMemberships.find(
+      (item) => item.schoolId === SCHOOL_ID && item.role === "teacher" && item.status === "active"
+    )!;
 
     expect(platform.createLesson({ folderId: "folder-greetings", title: "教务越权课节" })).toMatchObject({ ok: false, code: "FORBIDDEN" });
     expect(platform.createSubject({ name: "教务越权科目" })).toMatchObject({ ok: false, code: "FORBIDDEN" });
@@ -59,6 +62,33 @@ describe("academic affairs role and school isolation", () => {
       effectiveFrom: new Date().toISOString(),
       weights: { interaction: 30, homework: 30, exam: 40 },
       schoolId: SCHOOL_ID
+    })).toMatchObject({ ok: false, code: "FORBIDDEN" });
+
+    const beforeClasses = platform.getState().classes.length;
+    const createdClass = platform.createClass({
+      name: "教务新增班级",
+      teacherId: ownTeacher.userId,
+      schoolId: SCHOOL_ID,
+      actorId: ACADEMIC_ID
+    });
+    expect(createdClass.ok).toBe(true);
+    expect(createdClass.data?.schoolId).toBe(SCHOOL_ID);
+    expect(platform.getState().classes).toHaveLength(beforeClasses + 1);
+    expect(platform.createClass({
+      name: "教务外校教师班",
+      teacherId: outsider.id,
+      schoolId: SCHOOL_ID,
+      actorId: ACADEMIC_ID
+    })).toMatchObject({ ok: false, code: "OUT_OF_SCOPE" });
+    expect(platform.createClass({
+      name: "教务跨校班级",
+      teacherId: ownTeacher.userId,
+      schoolId: otherClass.schoolId,
+      actorId: ACADEMIC_ID
+    })).toMatchObject({ ok: false, code: "OUT_OF_SCOPE" });
+    expect(platform.deleteClass({
+      classId: createdClass.data!.id,
+      actorId: ACADEMIC_ID
     })).toMatchObject({ ok: false, code: "FORBIDDEN" });
 
     const beforeStudents = platform.getState().students.length;

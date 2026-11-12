@@ -108,9 +108,11 @@ export function Modal({
   children,
   footer,
   headerExtra,
+  hideHeader = false,
   width = "560px",
   fullscreen = false,
   backdropTone = "default",
+  stacked = false,
   panelClassName = "",
   placement = "center"
 }: {
@@ -121,10 +123,14 @@ export function Modal({
   footer?: ReactNode;
   /** 标题栏右侧的补充信息：跟随标题栏常驻，不随内容滚动。 */
   headerExtra?: ReactNode;
+  /** 全屏舞台等场景可以完全移除标题栏。 */
+  hideHeader?: boolean;
   width?: string;
   fullscreen?: boolean;
   /** 深色遮罩用于把内容压暗，突出浮层。 */
   backdropTone?: "default" | "dark";
+  /** 嵌套在另一个弹窗内时抬高层级，避免被父弹窗盖住。 */
+  stacked?: boolean;
   /** 个别弹窗需要自己控制最大高度等样式。 */
   panelClassName?: string;
   /** 右侧抽屉适合在当前工作流上完成一个聚焦任务，不打断背后的列表。 */
@@ -133,18 +139,20 @@ export function Modal({
   if (!open) return null;
   return createPortal(
     <div
-      className={`modal-backdrop ${fullscreen ? "modal-backdrop-fullscreen" : ""} ${backdropTone === "dark" ? "modal-backdrop-dark" : ""} ${placement === "right" ? "modal-backdrop-side" : ""}`}
+      className={`modal-backdrop ${fullscreen ? "modal-backdrop-fullscreen" : ""} ${backdropTone === "dark" ? "modal-backdrop-dark" : ""} ${placement === "right" ? "modal-backdrop-side" : ""} ${stacked ? "modal-backdrop-stacked" : ""}`}
       role="presentation"
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >
       <section className={`modal-panel ${fullscreen ? "modal-panel-fullscreen" : ""} ${panelClassName}`} role="dialog" aria-modal="true" aria-label={title} style={{ maxWidth: fullscreen ? undefined : width }}>
-        <header className="modal-header">
-          <h2>{title}</h2>
-          {headerExtra && <div className="modal-header-extra">{headerExtra}</div>}
-          <Button size="icon" variant="ghost" onClick={onClose} aria-label="关闭">
-            <X size={18} />
-          </Button>
-        </header>
+        {!hideHeader && (
+          <header className="modal-header">
+            <h2>{title}</h2>
+            {headerExtra && <div className="modal-header-extra">{headerExtra}</div>}
+            <Button size="icon" variant="ghost" onClick={onClose} aria-label="关闭">
+              <X size={18} />
+            </Button>
+          </header>
+        )}
         <div className="modal-content">{children}</div>
         {footer && <footer className="modal-footer">{footer}</footer>}
       </section>

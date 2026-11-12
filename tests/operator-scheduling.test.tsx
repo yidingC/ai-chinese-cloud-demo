@@ -218,6 +218,29 @@ describe("operator scheduling", () => {
     expect(within(historicalCard as HTMLElement).getByRole("button", { name: "名单" })).toBeInTheDocument();
   });
 
+  it("opens the teacher design from a session card in operator read-only mode", async () => {
+    platform.setCurrentUser("operator-ray");
+    refreshAppStore();
+    window.location.hash = "#/operator/scheduling";
+    render(<App />);
+
+    const session = platform.getState().sessions.find((item) => item.id === "session-preview");
+    expect(session).toBeDefined();
+
+    await screen.findByRole("tab", { name: /即将开始/ });
+    const card = cardFor(session!.id);
+    expect(card).not.toBeNull();
+    fireEvent.click(within(card as HTMLElement).getByRole("button", { name: "查看备课" }));
+
+    await waitFor(() =>
+      expect(window.location.hash).toContain(`/operator/sessions/${session!.id}/design`)
+    );
+    expect(await screen.findByRole("button", { name: "返回排课" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "学生名单" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^保存$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /上传课件/ })).not.toBeInTheDocument();
+  });
+
   it("cancels a session without requiring a reason", async () => {
     platform.setCurrentUser("operator-ray");
     refreshAppStore();

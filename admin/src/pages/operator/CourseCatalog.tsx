@@ -34,7 +34,7 @@ function courseReferences(state: PlatformState, courseId: string): CatalogRefere
   return {
     sessions: state.sessions.filter((session) => lessonIds.has(session.lessonId)).length,
     series: state.series.filter((series) => series.folderId === courseId || lessonIds.has(series.lessonId) || series.lessonIds.some((lessonId) => lessonIds.has(lessonId))).length,
-    interactions: state.interactionSets.filter((set) => lessonIds.has(set.lessonId)).length,
+    interactions: state.interactionSets.filter((set) => set.scope !== "library" && lessonIds.has(set.lessonId)).length,
     materials: state.materialRefs.filter((ref) => lessonIds.has(ref.lessonId)).length
   };
 }
@@ -43,7 +43,7 @@ function lessonReferences(state: PlatformState, lessonId: string): CatalogRefere
   return {
     sessions: state.sessions.filter((session) => session.lessonId === lessonId).length,
     series: state.series.filter((series) => series.lessonId === lessonId || series.lessonIds.includes(lessonId)).length,
-    interactions: state.interactionSets.filter((set) => set.lessonId === lessonId).length,
+    interactions: state.interactionSets.filter((set) => set.scope !== "library" && set.lessonId === lessonId).length,
     materials: state.materialRefs.filter((ref) => ref.lessonId === lessonId).length
   };
 }

@@ -289,13 +289,16 @@ export function InteractionEditor({
   items,
   onChange,
   activeItemId = "",
-  onActiveItemChange
+  onActiveItemChange,
+  single = false
 }: {
   items: InteractionItem[];
   onChange: (items: InteractionItem[]) => void;
   /** 当前高亮的题目：决定哪张题目卡片处于编辑态。 */
   activeItemId?: string;
   onActiveItemChange?: (itemId: string) => void;
+  /** 单题编辑：去掉新增、删除和题型工具条，供页面右侧详情栏使用。 */
+  single?: boolean;
 }) {
   function updateItem(itemId: string, patch: Partial<InteractionItem>) {
     onChange(items.map((item) => (item.id === itemId ? { ...item, ...patch } : item)));
@@ -313,7 +316,8 @@ export function InteractionEditor({
   }
 
   return (
-    <div className="interaction-editor">
+    <div className={`interaction-editor ${single ? "is-single" : ""}`}>
+      {!single && (
       <div className="editor-toolbar">
         <div>
           <strong>互动题目</strong>
@@ -327,6 +331,7 @@ export function InteractionEditor({
           ))}
         </div>
       </div>
+      )}
 
       {items.length === 0 && (
         <div className="editor-empty">
@@ -350,13 +355,15 @@ export function InteractionEditor({
               <div>
                 <strong>
                   {typeOptions.find((option) => option.type === item.type)?.label}
-                  {isActive && <span className="editor-active-chip">编辑中</span>}
+                  {!single && isActive && <span className="editor-active-chip">编辑中</span>}
                 </strong>
                 <small>{typeOptions.find((option) => option.type === item.type)?.hint}</small>
               </div>
-              <Button size="icon" variant="ghost" onClick={() => removeItem(item.id)} aria-label="删除题目">
-                <Trash2 size={17} />
-              </Button>
+              {!single && (
+                <Button size="icon" variant="ghost" onClick={() => removeItem(item.id)} aria-label="删除题目">
+                  <Trash2 size={17} />
+                </Button>
+              )}
             </header>
 
             <div className="editor-grid">

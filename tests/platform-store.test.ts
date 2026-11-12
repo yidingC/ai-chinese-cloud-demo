@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import "../admin/src/lib/platform";
 import { platform } from "../admin/src/lib/platform";
 import { formatDateTime } from "../admin/src/lib/format";
-import { lessonContent, pickTodayTasks, studentPushedTasks, studentWebTasks } from "../admin/src/lib/domain";
+import { lessonContent, pickTodayTasks, setsForSession, studentPushedTasks, studentWebTasks } from "../admin/src/lib/domain";
 
 describe("AI Chinese Cloud platform store", () => {
   beforeEach(() => {
@@ -511,6 +511,155 @@ describe("AI Chinese Cloud platform store", () => {
     expect(platform.getState().interactionSets.find((item) => item.id === set.id)?.currentVersionId).toBe(versionOne.id);
   });
 
+  it("groups the restaurant demo interactions into three multi-question rounds", () => {
+    const state = platform.getState();
+    const rounds = state.interactionSets
+      .filter((set) => set.id.startsWith("set-food-") && set.id.endsWith("-round"))
+      .sort((a, b) => ["preview", "live", "review"].indexOf(a.phase) - ["preview", "live", "review"].indexOf(b.phase));
+
+    expect(rounds.map((set) => set.id)).toEqual([
+      "set-food-preview-round",
+      "set-food-live-round",
+      "set-food-review-round"
+    ]);
+    rounds.forEach((set) => {
+      const version = state.interactionVersions.find((item) => item.id === set.currentVersionId);
+      expect(version?.items).toHaveLength(3);
+    });
+    expect(state.interactionSets.some((set) => set.id === "set-food-picture")).toBe(false);
+  });
+
+  it("migrates lesson interactions into library masters plus independent lesson copies", () => {
+    const state = platform.getState();
+    const copy = state.interactionSets.find((set) => set.id === "set-food-live-round");
+    expect(copy?.scope).toBe("lesson");
+    expect(copy?.sourceSetId).toBe("set-food-live-round-library");
+
+    const master = state.interactionSets.find((set) => set.id === "set-food-live-round-library");
+    expect(master?.scope).toBe("library");
+    expect(master?.lessonId).toBe("");
+    const masterVersion = state.interactionVersions.find((version) => version.id === master?.currentVersionId);
+    expect(masterVersion?.setId).toBe(master?.id);
+    expect(masterVersion?.items).toHaveLength(3);
+  });
+
+  it("copies a library round into a lesson and keeps both sides independent", () => {
+    const state = platform.getState();
+    const master = state.interactionSets.find((set) => set.id === "set-food-live-round-library")!;
+    const masterVersion = state.interactionVersions.find((version) => version.id === master.currentVersionId)!;
+
+    const copied = platform.copyInteractionSetToLesson({
+      setId: master.id,
+      lessonId: "lesson-time",
+      phase: "live",
+      sessionIds: ["session-preview"],
+      actorId: "teacher-lina"
+    });
+    expect(copied.ok).toBe(true);
+    const copy = copied.data!.set;
+    expect(copy.scope).toBe("lesson");
+    expect(copy.lessonId).toBe("lesson-time");
+    expect(copy.sourceSetId).toBe(master.id);
+    expect(copy.sessionIds).toEqual(["session-preview"]);
+    expect(copied.data!.version.items).toHaveLength(masterVersion.items.length);
+
+    platform.saveInteractionSet({
+      setId: master.id,
+      lessonId: "",
+      scope: "library",
+      title: "母版改名",
+      phase: "live",
+      items: masterVersion.items.slice(0, 1),
+      actorId: "teacher-lina"
+    });
+    const copyAfterMasterEdit = platform.getState().interactionSets.find((set) => set.id === copy.id)!;
+    const copyVersionAfterMasterEdit = platform.getState().interactionVersions.find((version) => version.id === copyAfterMasterEdit.currentVersionId)!;
+    expect(copyAfterMasterEdit.title).not.toBe("母版改名");
+    expect(copyVersionAfterMasterEdit.items).toHaveLength(masterVersion.items.length);
+
+    platform.saveInteractionSet({
+      setId: copy.id,
+      lessonId: "lesson-time",
+      title: copy.title,
+      phase: "live",
+      items: copyVersionAfterMasterEdit.items.slice(0, 1),
+      actorId: "teacher-lina"
+    });
+    const masterAfterCopyEdit = platform.getState().interactionSets.find((set) => set.id === master.id)!;
+    const masterVersionAfterCopyEdit = platform.getState().interactionVersions.find((version) => version.id === masterAfterCopyEdit.currentVersionId)!;
+    expect(masterVersionAfterCopyEdit.items).toHaveLength(1);
+  });
+
+  it("saves a lesson copy back to the library only when explicitly asked", () => {
+    const state = platform.getState();
+    const libraryCount = state.interactionSets.filter((set) => set.scope === "library").length;
+    const copy = state.interactionSets.find((set) => set.id === "set-food-live-round")!;
+
+    const blocked = platform.assignInteractionSessions({ setId: copy.sourceSetId!, sessionIds: [], actorId: "teacher-lina" });
+    expect(blocked.ok).toBe(false);
+    expect(blocked.code).toBe("INVALID_STATE");
+
+    const saved = platform.saveInteractionSetToLibrary({ setId: copy.id, actorId: "teacher-lina" });
+    expect(saved.ok).toBe(true);
+    const newMaster = saved.data!.set;
+    expect(newMaster.scope).toBe("library");
+    expect(newMaster.origin).toBe("library");
+    expect(newMaster.title).toBe(copy.title);
+    expect(saved.data!.version.items).toHaveLength(3);
+
+    const after = platform.getState();
+    expect(after.interactionSets.filter((set) => set.scope === "library")).toHaveLength(libraryCount + 1);
+    expect(after.interactionSets.find((set) => set.id === copy.id)?.title).toBe(copy.title);
+  });
+
+  it("freezes the lesson content when the teacher starts the session", () => {
+    const before = platform.getState();
+    const target = before.sessions.find((session) => session.id === "session-preview")!;
+    const beforeSets = setsForSession(before, target).filter((set) => set.status === "published");
+    expect(beforeSets.length).toBeGreaterThan(0);
+    const liveSet = beforeSets.find((set) => set.phase === "live") ?? beforeSets[0];
+    const frozenVersionId = liveSet.currentVersionId;
+    const frozenTitle = liveSet.title;
+
+    const started = platform.startSession({ sessionId: target.id, actorId: "teacher-berenice" });
+    expect(started.ok).toBe(true);
+    const snapshot = started.data!.contentSnapshot!;
+    expect(snapshot.interactions.length).toBe(beforeSets.length);
+    expect(snapshot.interactions.find((entry) => entry.setId === liveSet.id)?.versionId).toBe(frozenVersionId);
+    expect(snapshot.materials.length).toBeGreaterThan(0);
+
+    const version = before.interactionVersions.find((item) => item.id === frozenVersionId)!;
+    platform.saveInteractionSet({
+      setId: liveSet.id,
+      lessonId: liveSet.lessonId,
+      title: "课后改名不应影响历史课次",
+      phase: "live",
+      items: version.items.slice(0, 1),
+      actorId: "teacher-berenice"
+    });
+
+    const after = platform.getState();
+    const frozenSession = after.sessions.find((session) => session.id === target.id)!;
+    const frozenSets = setsForSession(after, frozenSession);
+    const frozenSet = frozenSets.find((set) => set.id === liveSet.id)!;
+    expect(frozenSet.title).toBe(frozenTitle);
+    expect(frozenSet.currentVersionId).toBe(frozenVersionId);
+    expect(after.interactionVersions.find((item) => item.id === frozenSet.currentVersionId)?.items).toHaveLength(version.items.length);
+
+    const attempt = platform.recordAttempt({
+      setId: liveSet.id,
+      studentId: "student-anisa",
+      sessionId: target.id,
+      phase: "live",
+      answers: {},
+      score: 90,
+      timeSpentSeconds: 10
+    });
+    expect(attempt.ok).toBe(true);
+    expect(attempt.data?.versionId).toBe(frozenVersionId);
+    expect(attempt.data?.setTitle).toBe(frozenTitle);
+  });
+
   it("ships the four new interaction types in the demo set", () => {
     const state = platform.getState();
     const scenarioSet = state.interactionSets.find((set) => set.id === "set-greetings-scenario");
@@ -559,6 +708,24 @@ describe("AI Chinese Cloud platform store", () => {
     state.interactionTemplates.forEach((template) => {
       expect(template.summary.length).toBeGreaterThan(0);
       expect(template.item.prompt.length).toBeGreaterThan(0);
+    });
+  });
+
+  it("groups full interaction rounds by teaching scenario", () => {
+    const state = platform.getState();
+    const rounds = state.interactionRoundTemplates;
+    expect(rounds.length).toBe(252);
+    expect(new Set(rounds.map((round) => round.scenarioId))).toEqual(
+      new Set(["warmup", "vocabulary", "sentence", "scenario", "review", "speaking"])
+    );
+    expect(new Set(rounds.map((round) => round.topicId)).size).toBe(14);
+
+    const questionTemplateIds = new Set(state.interactionTemplates.map((template) => template.id));
+    rounds.forEach((round) => {
+      expect(round.itemTemplateIds.length).toBeGreaterThanOrEqual(3);
+      expect(round.itemTemplateIds.length).toBeLessThanOrEqual(5);
+      expect(round.estimatedMinutes).toBeGreaterThan(0);
+      round.itemTemplateIds.forEach((templateId) => expect(questionTemplateIds.has(templateId)).toBe(true));
     });
   });
 

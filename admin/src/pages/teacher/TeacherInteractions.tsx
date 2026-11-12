@@ -1,72 +1,123 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { BookOpen, CalendarCheck, Clock3, Eye, Layers3, Plus, Search } from "lucide-react";
+import { CalendarCheck, Clock3, Copy, Eye, Layers3, Pencil, Plus, Search, Settings2, Sparkles } from "lucide-react";
 import { platform } from "../../lib/platform";
 import { usePlatformStore } from "../../store/usePlatformStore";
-import { currentUser, getCurrentInteractionVersion, getLesson, getTeacherSessions } from "../../lib/domain";
-import type { InteractionItem, InteractionSet, Phase } from "../../domain/types";
+import { currentUser, getCurrentInteractionVersion } from "../../lib/domain";
+import type {
+  InteractionItem,
+  InteractionRoundScenario,
+  InteractionRoundTemplate,
+  InteractionSet,
+  InteractionTemplateLevel,
+  Phase
+} from "../../domain/types";
 import { interactionTypeShortLabel } from "../../lib/interactionTypes";
 import { Badge, Button, Card, EmptyState, Modal, PageHeader, Select, Tabs, TextInput } from "../../components/ui";
-import { AssignSessionsModal } from "../../components/AssignSessionsModal";
+import { CopyInteractionToLessonModal } from "../../components/CopyInteractionToLessonModal";
 import { templateToItem } from "../../components/InteractionTemplatePicker";
-import { InteractionPlayer, StudentPhonePreview } from "../../components/InteractionPlayer";
+import { templateLevelLabel } from "../../lib/templateLibrary";
+import { roundTemplateQuestionTemplates } from "../../lib/roundTemplates";
+import { InteractionRoundTemplateChips } from "../../components/InteractionRoundTemplateChips";
+import { StudentPhonePreview } from "../../components/InteractionPlayer";
 import { InteractionSetEditorModal } from "../../components/InteractionSetEditorModal";
+import { InteractionSetSettingsModal } from "../../components/InteractionSetSettingsModal";
+import { InteractionLibraryEditorModal, type InteractionLibraryDraft } from "./TeacherInteractionLibraryEditor";
 import { PmNote } from "../../components/PmNote";
 import { formatDateTime } from "../../lib/format";
 
-export function TeacherInteractions({ embedded = false }: { embedded?: boolean }) {
+export function TeacherInteractions() {
   const { t } = useTranslation();
-  const { state, run } = usePlatformStore();
+  const { state } = usePlatformStore();
   const navigate = useNavigate();
   const user = currentUser(state);
-  const teacherSessions = getTeacherSessions(state, user.id);
-  const lessonIds = [...new Set(teacherSessions.map((session) => session.lessonId))];
-  const teacherSets = state.interactionSets.filter((set) => lessonIds.includes(set.lessonId));
+  /** 互动库只展示全局母版；课节里的是各自的副本。 */
+  const teacherSets = state.interactionSets.filter((set) => set.scope === "library");
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState<"all" | Phase>("all");
   const [query, setQuery] = useState("");
-  const [sortKey, setSortKey] = useState<"nearest" | "created-desc" | "created-asc">("nearest");
-  const [assignTarget, setAssignTarget] = useState<InteractionSet | null>(null);
-  const [pendingSessionIds, setPendingSessionIds] = useState<string[]>([]);
+  const [sortKey, setSortKey] = useState<"updated-desc" | "updated-asc">("updated-desc");
+  const [libraryTab, setLibraryTab] = useState<"designs" | "templates">("designs");
+  const [templateQuery, setTemplateQuery] = useState("");
+  const [templateScenario, setTemplateScenario] = useState<InteractionRoundScenario | "all">("all");
+  const [templatePhase, setTemplatePhase] = useState<"all" | Phase>("all");
+  const [templateLevel, setTemplateLevel] = useState<InteractionTemplateLevel | "all">("all");
+  const [templateVisible, setTemplateVisible] = useState(12);
+  const [copyTarget, setCopyTarget] = useState<InteractionSet | null>(null);
   const [editingSet, setEditingSet] = useState<InteractionSet | null | undefined>(undefined);
-  const [editorSeed, setEditorSeed] = useState<{ lessonId?: string; phase?: Phase; title?: string; items?: InteractionItem[] }>({});
+  const [editorView, setEditorView] = useState<"design" | "preview">("design");
+  const [editorScope, setEditorScope] = useState<"library" | "lesson">("library");
+  const [editorSeed, setEditorSeed] = useState<{ phase?: Phase; title?: string; items?: InteractionItem[] }>({});
+  const [editorCopyTarget, setEditorCopyTarget] = useState<{ lessonId: string; phase: Phase; sessionIds: string[] } | null>(null);
   const [previewItems, setPreviewItems] = useState<InteractionItem[] | null>(null);
-  /** 一组互动最近一次课次距离当前时间的间隔；用于“按最近课次”排序。 */
-  function nearestSessionDistance(set: InteractionSet) {
-    const lessonSessions = teacherSessions.filter((session) => session.lessonId === set.lessonId);
-    const scoped = set.sessionIds && set.sessionIds.length > 0
-      ? lessonSessions.filter((session) => set.sessionIds?.includes(session.id))
-      : lessonSessions;
-    if (scoped.length === 0) return Number.POSITIVE_INFINITY;
-    const now = Date.now();
-    return Math.min(...scoped.map((session) => Math.abs(new Date(session.startAt).getTime() - now)));
-  }
+  const [editingLibrarySetId, setEditingLibrarySetId] = useState("");
+  const [libraryDraft, setLibraryDraft] = useState<InteractionLibraryDraft | null>(null);
+  const [settingsTarget, setSettingsTarget] = useState<InteractionSet | null>(null);
 
   /** 卡片上显示的日期就是互动最近一次编辑（创建版本）的时间。 */
   const filteredSets = teacherSets
     .filter((set) => {
       const matchesTab = tab === "all" || set.phase === tab;
-      const lesson = getLesson(state, set.lessonId);
-      const matchesQuery = !query || set.title.toLowerCase().includes(query.toLowerCase()) || lesson?.title.toLowerCase().includes(query.toLowerCase());
+      const keyword = query.trim().toLowerCase();
+      const matchesQuery = !keyword ||
+        set.title.toLowerCase().includes(keyword) ||
+        (set.tags ?? []).join(" ").toLowerCase().includes(keyword);
       return matchesTab && matchesQuery;
     })
     .sort((a, b) => {
-      if (sortKey === "created-desc") return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-      if (sortKey === "created-asc") return new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
-      const distance = nearestSessionDistance(a) - nearestSessionDistance(b);
-      return distance !== 0 ? distance : new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      const delta = new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      return sortKey === "updated-desc" ? delta : -delta;
     });
 
-  const sessionsOfLesson = (lessonId: string) =>
-    teacherSessions
-      .filter((session) => session.lessonId === lessonId)
-      .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+  const roundTemplates = useMemo(() => {
+    const keyword = templateQuery.trim().toLowerCase();
+    return state.interactionRoundTemplates.filter((template) => {
+      const scenarioMatch = templateScenario === "all" || template.scenarioId === templateScenario;
+      const phaseMatch = templatePhase === "all" || template.phase === templatePhase;
+      const levelMatch = templateLevel === "all" || template.level === templateLevel;
+      const queryMatch =
+        !keyword ||
+        template.title.toLowerCase().includes(keyword) ||
+        template.topic.toLowerCase().includes(keyword) ||
+        template.summary.toLowerCase().includes(keyword) ||
+        template.tags.join(" ").toLowerCase().includes(keyword);
+      return scenarioMatch && phaseMatch && levelMatch && queryMatch;
+    });
+  }, [state.interactionRoundTemplates, templateQuery, templateScenario, templatePhase, templateLevel]);
 
-  function openCreate(options?: { lessonId?: string; phase?: Phase; sessionIds?: string[]; title?: string; items?: InteractionItem[] }) {
-    setPendingSessionIds(options?.sessionIds ?? []);
-    setEditorSeed({ lessonId: options?.lessonId, phase: options?.phase, title: options?.title, items: options?.items });
+  function openCreate(options?: { phase?: Phase; title?: string; items?: InteractionItem[] }) {
+    setLibraryDraft(null);
+    setEditorCopyTarget(null);
+    setEditorScope("library");
+    setEditorView("design");
+    setEditorSeed({ phase: options?.phase, title: options?.title, items: options?.items });
     setEditingSet(null);
+  }
+
+  /** 互动库新建：先设置壳层信息，再进入与「编辑题目」相同的双栏工作区。 */
+  function openLibraryCreate(options?: { phase?: Phase; title?: string; items?: InteractionItem[] }) {
+    setEditingSet(undefined);
+    setEditorCopyTarget(null);
+    setEditingLibrarySetId("");
+    setLibraryDraft({
+      title: options?.title ?? "",
+      phase: options?.phase ?? "live",
+      tags: [],
+      countsTowardGrade: true,
+      items: options?.items ?? [],
+      openSettings: !options?.title && !options?.items?.length
+    });
+  }
+
+  function useRoundTemplate(template: InteractionRoundTemplate) {
+    const questionTemplates = roundTemplateQuestionTemplates(template, state.interactionTemplates);
+    if (questionTemplates.length === 0) return;
+    openLibraryCreate({
+      phase: template.phase,
+      title: template.title,
+      items: questionTemplates.map(templateToItem)
+    });
   }
 
   // 从课表进入：/teacher/interactions?sessionId=..&lessonId=..&phase=.. 或 ?editSetId=..
@@ -79,22 +130,20 @@ export function TeacherInteractions({ embedded = false }: { embedded?: boolean }
     if (templateId) {
       const template = state.interactionTemplates.find((item) => item.id === templateId);
       if (template) {
-        openCreate({ lessonId: lessonIds[0], title: template.title, items: [templateToItem(template)] });
+        openLibraryCreate({ title: template.title, items: [templateToItem(template)] });
       }
     } else if (previewSetId) {
       const target = state.interactionSets.find((item) => item.id === previewSetId);
-      if (target) setPreviewItems(getCurrentInteractionVersion(state, target)?.items ?? []);
+      if (target) openEdit(target, "preview");
     } else if (editSetId) {
       const target = state.interactionSets.find((item) => item.id === editSetId);
       if (target) openEdit(target);
     } else if (sessionId) {
       const session = state.sessions.find((item) => item.id === sessionId);
       if (session) {
-        openCreate({
-          lessonId: session.lessonId,
-          phase: (searchParams.get("phase") as Phase) ?? "live",
-          sessionIds: [session.id]
-        });
+        const phase = (searchParams.get("phase") as Phase) ?? "live";
+        openCreate({ phase });
+        setEditorCopyTarget({ lessonId: session.lessonId, phase, sessionIds: [session.id] });
       }
     }
     const next = new URLSearchParams(searchParams);
@@ -106,39 +155,53 @@ export function TeacherInteractions({ embedded = false }: { embedded?: boolean }
     next.delete("templateId");
     setSearchParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [searchParams]);
 
-  function openEdit(set: InteractionSet) {
-    setPendingSessionIds([]);
+  function openEdit(set: InteractionSet, initialView: "design" | "preview" = "design") {
+    if (set.scope === "library" && initialView === "design") {
+      setEditingLibrarySetId(set.id);
+      return;
+    }
+    setEditorCopyTarget(null);
+    setEditorScope(set.scope === "library" ? "library" : "lesson");
+    setEditorView(initialView);
     setEditingSet(set);
-  }
-
-  function saveAssign(sessionIds: string[]) {
-    if (!assignTarget) return;
-    const result = run(
-      () => platform.assignInteractionSessions({ setId: assignTarget.id, sessionIds, actorId: user.id }),
-      sessionIds.length ? `已配置到 ${sessionIds.length} 节课次` : "已改为作用于全部课次"
-    );
-    if (result.ok) setAssignTarget(null);
   }
 
   return (
     <>
-      {!embedded && (
-        <PageHeader
-          eyebrow="Interaction library"
-          title="我的互动设计"
-          description="集中管理你准备过的全部互动设计，可预览、配置课次或继续编辑。"
-          actions={
-            <>
-              <Button variant="secondary" onClick={() => navigate("/teacher/schedule")}><CalendarCheck size={16} /> 去我的课表</Button>
-              <PmNote kind="流程" note="点击后创建互动；保存并发布会立即生成学生看到的当前版本。">
-                <Button onClick={() => openCreate()}><Plus size={17} /> {t("teacher.createInteraction")}</Button>
-              </PmNote>
-            </>
-          }
+      <PageHeader
+        eyebrow="Interaction library"
+        title={t("teacher.interactionLibrary")}
+        description="这里存放可被任意课次取用的互动轮次；复制到课次后各改各的，互不影响。"
+        actions={
+          <>
+            <Button variant="secondary" onClick={() => navigate("/teacher/schedule")}><CalendarCheck size={16} /> 去我的课表</Button>
+            <PmNote kind="流程" note="点击后创建互动；保存并发布会立即生成学生看到的当前版本。">
+              <Button onClick={() => openLibraryCreate()}><Plus size={17} /> {t("teacher.createInteraction")}</Button>
+            </PmNote>
+          </>
+        }
+      />
+
+      <Card className="content-filter-bar library-tab-bar">
+        <Tabs
+          value={libraryTab}
+          onChange={(value) => setLibraryTab(value as "designs" | "templates")}
+          items={[
+            { value: "designs", label: "我的互动轮次", count: teacherSets.length },
+            { value: "templates", label: "互动模板库", count: state.interactionRoundTemplates.length }
+          ]}
         />
-      )}
+        <span className="library-tab-hint">
+          {libraryTab === "designs"
+            ? "每一轮可包含多道题；可预览、复制到课次或继续编辑母版。"
+            : "按教学场景整理的一轮互动模板，整轮复用后可继续修改。"}
+        </span>
+      </Card>
+
+      {libraryTab === "designs" && (
+      <>
 
       <Card className="content-filter-bar">
         <Tabs
@@ -146,7 +209,7 @@ export function TeacherInteractions({ embedded = false }: { embedded?: boolean }
           onChange={setTab}
           items={[
             { value: "all", label: "全部", count: teacherSets.length },
-            { value: "preview", label: "课前", count: teacherSets.filter((set) => set.phase === "preview").length },
+            { value: "preview", label: "预习", count: teacherSets.filter((set) => set.phase === "preview").length },
             { value: "live", label: "课中", count: teacherSets.filter((set) => set.phase === "live").length },
             { value: "review", label: "复习", count: teacherSets.filter((set) => set.phase === "review").length }
           ]}
@@ -154,100 +217,186 @@ export function TeacherInteractions({ embedded = false }: { embedded?: boolean }
         <div className="filter-bar-trailing">
           <div className="search-box">
             <Search size={17} />
-            <TextInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索互动或课节" />
+            <TextInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索互动轮次或标签" />
           </div>
-          <PmNote kind="口径" note="按最近课次排序时同时参考作用范围；卡片时间显示最近一次发布或编辑时间。">
+            <PmNote kind="口径" note="互动库不绑定课节；卡片时间显示最近一次发布或编辑时间。">
             <Select
               className="sort-select"
               value={sortKey}
-              onChange={(event) => setSortKey(event.target.value as "nearest" | "created-desc" | "created-asc")}
+                onChange={(event) => setSortKey(event.target.value as "updated-desc" | "updated-asc")}
               aria-label="排序方式"
             >
-              <option value="nearest">按最近课次</option>
-              <option value="created-desc">按创建时间：新→旧</option>
-              <option value="created-asc">按创建时间：旧→新</option>
+                <option value="updated-desc">按更新时间：新→旧</option>
+                <option value="updated-asc">按更新时间：旧→新</option>
             </Select>
           </PmNote>
-          {embedded && (
-            <PmNote kind="流程" note="点击后创建互动；保存并发布会立即生成学生看到的当前版本。">
-              <Button onClick={() => openCreate()}><Plus size={17} /> {t("teacher.createInteraction")}</Button>
-            </PmNote>
-          )}
         </div>
       </Card>
 
-      <PmNote block kind="规则" note="一个互动可作用全部或部分课次，移出单节课不影响其他课次。预览查看学生视图，配置调整课次范围，编辑保存后成为当前版本。">
+      <PmNote block kind="规则" note="互动库母版不直接出现在课堂；复制到课次时生成独立副本，课堂里改题不会回写母版，母版更新也不会改已经复制出去的课堂。">
         <div className="interaction-list-grid">
         {filteredSets.map((set) => {
           const version = getCurrentInteractionVersion(state, set);
-          const lesson = getLesson(state, set.lessonId);
-          const types = [...new Set((version?.items ?? []).map((item) => item.type))];
+          const items = version?.items ?? [];
+          const types = [...new Set(items.map((item) => item.type))];
           return (
-            <Card className="interaction-manage-card" key={set.id}>
-              <div className="interaction-manage-head">
+            <Card className="interaction-manage-card interaction-round-card round-card" key={set.id}>
+              <div className="round-card-top">
                 <span className={`phase-badge phase-${set.phase}`}>
-                  {set.phase === "preview" ? "课前" : set.phase === "live" ? "课中" : "复习"}
+                  {set.phase === "preview" ? "预习" : set.phase === "live" ? "课中" : "复习"}
                 </span>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="round-card-settings-button"
+                  aria-label={`互动设置 ${set.title}`}
+                  title="互动设置"
+                  onClick={() => setSettingsTarget(set)}
+                >
+                  <Settings2 size={14} />
+                </Button>
               </div>
               <h2>{set.title}</h2>
               {types.length > 0 && (
-                <div className="interaction-type-chips interaction-manage-type">
-                  {types.map((type) => (
+                <div className="interaction-type-chips round-card-chips">
+                  {types.slice(0, 4).map((type) => (
                     <span key={type}>{interactionTypeShortLabel(type)}</span>
                   ))}
+                  {types.length > 4 && <span>+{types.length - 4}</span>}
                 </div>
               )}
-              <div className="interaction-lesson-ref">
-                <BookOpen size={16} />
-                <span>{lesson?.coverEmoji} {lesson?.title}</span>
+              <div className="round-card-stats">
+                <span><Layers3 size={14} /> {items.length} 道题 · {types.length} 种题型</span>
               </div>
-              <div className="interaction-scope-row">
-                <CalendarCheck size={15} />
-                {set.sessionIds ? (
-                  <span className="scope-specific">
-                    {`已配置 ${set.sessionIds.length} / ${sessionsOfLesson(set.lessonId).length} 节课次${set.sessionIds.length ? "：" : ""}`}
-                    {set.sessionIds
-                      .map((id) => teacherSessions.find((session) => session.id === id))
-                      .filter(Boolean)
-                      .slice(0, 2)
-                      .map((session) => formatDateTime(session!.startAt, state.ui.timeZone, state.ui.language))
-                      .join("、")}
-                    {set.sessionIds.length > 2 ? " 等" : ""}
-                  </span>
-                ) : (
-                  <span className="scope-all">
-                    全部课次（{sessionsOfLesson(set.lessonId).length} 节）
-                    {(set.excludedSessionIds?.length ?? 0) > 0 && ` · 已移出 ${set.excludedSessionIds!.length} 节`}
-                  </span>
-                )}
-              </div>
-              <div className="interaction-manage-footer">
-                <small><Clock3 size={14} /> {formatDateTime(set.updatedAt, state.ui.timeZone, state.ui.language)}</small>
-                <div>
-                  <Button size="sm" variant="ghost" onClick={() => setPreviewItems(version?.items ?? [])}><Eye size={15} /> 预览</Button>
-                  <Button size="sm" variant="soft" onClick={() => setAssignTarget(set)}><CalendarCheck size={15} /> 配置到课节</Button>
-                  <Button size="sm" variant="secondary" onClick={() => openEdit(set)}>编辑</Button>
+              <div className="round-card-footer">
+                <small><Clock3 size={14} /> 最近编辑 · {formatDateTime(set.updatedAt, state.ui.timeZone, state.ui.language)}</small>
+                <div className="round-card-actions">
+                  <Button size="sm" variant="ghost" onClick={() => openEdit(set, "preview")}><Eye size={15} /> 预览</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setCopyTarget(set)}><Copy size={15} /> 复制到课次</Button>
+                  <Button size="sm" variant="soft" onClick={() => openEdit(set)}><Pencil size={15} /> 编辑题目</Button>
                 </div>
               </div>
             </Card>
           );
         })}
-        {filteredSets.length === 0 && <EmptyState title="暂无互动内容" description="新建一个互动模板，开始配置你的课堂。" action={<Button onClick={() => openCreate()}>新建互动</Button>} />}
+        {filteredSets.length === 0 && <EmptyState title="还没有互动轮次" description="新建一轮互动，把同一目标下的题目放在一起。" action={<Button onClick={() => openLibraryCreate()}>新建互动</Button>} />}
         </div>
       </PmNote>
+      </>
+      )}
+
+      {libraryTab === "templates" && (
+      <>
+        <Card className="content-filter-bar round-template-filter-bar">
+          <div className="round-template-filter-stack">
+            <div className="round-template-filter-row">
+              <Tabs
+                value={templatePhase}
+                onChange={(value) => { setTemplatePhase(value as "all" | Phase); setTemplateVisible(12); }}
+                items={[
+                  { value: "all", label: "全部", count: state.interactionRoundTemplates.length },
+                  { value: "preview", label: "预习", count: state.interactionRoundTemplates.filter((template) => template.phase === "preview").length },
+                  { value: "live", label: "课中", count: state.interactionRoundTemplates.filter((template) => template.phase === "live").length },
+                  { value: "review", label: "复习", count: state.interactionRoundTemplates.filter((template) => template.phase === "review").length }
+                ]}
+              />
+              <div className="round-template-filter-tools">
+                <div className="search-box">
+                  <Search size={17} />
+                  <TextInput
+                    value={templateQuery}
+                    onChange={(event) => { setTemplateQuery(event.target.value); setTemplateVisible(12); }}
+                    placeholder="搜索模板主题，例如“餐厅”“天气”"
+                  />
+                </div>
+                <Select
+                  className="sort-select"
+                  value={templateLevel}
+                  onChange={(event) => { setTemplateLevel(event.target.value as InteractionTemplateLevel | "all"); setTemplateVisible(12); }}
+                  aria-label="模板难度"
+                >
+                  <option value="all">全部难度</option>
+                  <option value="beginner">初级</option>
+                  <option value="intermediate">中级</option>
+                  <option value="advanced">高级</option>
+                </Select>
+              </div>
+            </div>
+            <div className="round-template-filter-main">
+              <span className="round-template-filter-label">教学场景</span>
+              <InteractionRoundTemplateChips
+                templates={state.interactionRoundTemplates}
+                value={templateScenario}
+                onChange={(next) => { setTemplateScenario(next); setTemplateVisible(12); }}
+              />
+            </div>
+          </div>
+        </Card>
+
+        <p className="muted-copy">匹配 {roundTemplates.length} 轮互动模板</p>
+
+        <div className="template-grid">
+          {roundTemplates.slice(0, templateVisible).map((template) => {
+            const questionTemplates = roundTemplateQuestionTemplates(template, state.interactionTemplates);
+            const items = questionTemplates.map((item) => item.item);
+            const types = [...new Set(items.map((item) => item.type))];
+            return (
+              <Card key={template.id} className="round-card round-template-card">
+                <div className="round-card-top">
+                  <span className={`phase-badge phase-${template.phase}`}>
+                    {template.phase === "preview" ? "预习" : template.phase === "live" ? "课中" : "复习"}
+                  </span>
+                  <Badge tone="neutral">{templateLevelLabel(template.level)}</Badge>
+                </div>
+                <h2>{template.title}</h2>
+                <p className="round-card-summary">{template.summary}</p>
+                <div className="round-card-chips">
+                  {types.slice(0, 4).map((type) => <span key={type}>{interactionTypeShortLabel(type)}</span>)}
+                  {types.length > 4 && <span>+{types.length - 4}</span>}
+                </div>
+                <div className="round-card-stats">
+                  <span><Layers3 size={14} /> {items.length} 道题 · {types.length} 种题型</span>
+                  <span><Clock3 size={14} /> 约 {template.estimatedMinutes} 分钟</span>
+                </div>
+                <div className="round-card-footer">
+                  <span />
+                  <div className="round-card-actions">
+                  <Button size="sm" variant="ghost" onClick={() => setPreviewItems(items)}><Eye size={15} /> 预览</Button>
+                  <Button size="sm" variant="soft" onClick={() => useRoundTemplate(template)}>
+                    <Sparkles size={14} /> 复用这一轮
+                  </Button>
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+
+        {roundTemplates.length > templateVisible && (
+          <div className="template-more">
+            <Button variant="ghost" onClick={() => setTemplateVisible((value) => value + 12)}>
+              显示更多（还有 {roundTemplates.length - templateVisible} 轮）
+            </Button>
+          </div>
+        )}
+        {roundTemplates.length === 0 && <EmptyState title="没有匹配的互动模板" description="换个教学场景、难度或关键词再试。" />}
+      </>
+      )}
 
       <InteractionSetEditorModal
         open={editingSet !== undefined}
         set={editingSet ?? null}
-        defaultLessonId={editorSeed.lessonId ?? lessonIds[0] ?? state.lessons[0]?.id}
+        scope={editorScope}
+        initialView={editorView}
+        defaultLessonId={editingSet?.lessonId}
         defaultPhase={editorSeed.phase ?? "preview"}
         presetTitle={editorSeed.title}
         presetItems={editorSeed.items}
         teacherId={user.id}
-        pendingSessionIds={pendingSessionIds}
+        copyTarget={editorCopyTarget ?? undefined}
         onClose={() => {
           setEditingSet(undefined);
-          setPendingSessionIds([]);
+          setEditorCopyTarget(null);
         }}
       />
 
@@ -255,13 +404,29 @@ export function TeacherInteractions({ embedded = false }: { embedded?: boolean }
         {previewItems && <StudentPhonePreview items={previewItems} onClose={() => setPreviewItems(null)} />}
       </Modal>
 
-      <AssignSessionsModal
-        open={Boolean(assignTarget)}
-        onClose={() => setAssignTarget(null)}
+      <InteractionLibraryEditorModal
+        open={Boolean(editingLibrarySetId || libraryDraft)}
+        setId={editingLibrarySetId}
+        draft={libraryDraft ?? undefined}
+        onClose={() => {
+          setEditingLibrarySetId("");
+          setLibraryDraft(null);
+        }}
+      />
+
+      <InteractionSetSettingsModal
+        open={Boolean(settingsTarget)}
+        set={settingsTarget}
+        teacherId={user.id}
+        onClose={() => setSettingsTarget(null)}
+      />
+
+      <CopyInteractionToLessonModal
+        open={Boolean(copyTarget)}
+        onClose={() => setCopyTarget(null)}
         state={state}
-        set={assignTarget}
-        sessions={assignTarget ? sessionsOfLesson(assignTarget.lessonId) : []}
-        onSave={saveAssign}
+        set={copyTarget}
+        teacherId={user.id}
       />
     </>
   );

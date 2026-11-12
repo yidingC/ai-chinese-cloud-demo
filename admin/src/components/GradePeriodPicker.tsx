@@ -6,11 +6,13 @@ import { Select, TextInput } from "./ui";
 export function GradePeriodPicker({
   value,
   onChange,
-  className = ""
+  className = "",
+  compact = false
 }: {
   value: GradeRangeSelection;
   onChange: (value: GradeRangeSelection) => void;
   className?: string;
+  compact?: boolean;
 }) {
   function changePreset(preset: GradeRangePreset) {
     if (preset === "custom") {
@@ -21,8 +23,10 @@ export function GradePeriodPicker({
     onChange(relativeGradeRange(value.timeZone, days));
   }
 
+  const rangeSummary = `${value.start.slice(5).replace("-", "/")}–${value.end.slice(5).replace("-", "/")}`;
+
   return (
-    <div className={`grade-period-picker ${className}`}>
+    <div className={`grade-period-picker ${compact ? "is-compact" : ""} ${className}`.trim()}>
       <span className="grade-period-label"><CalendarDays size={15} /> 统计时间</span>
       <Select
         value={value.preset}
@@ -34,23 +38,27 @@ export function GradePeriodPicker({
         <option value="90d">最近 90 天</option>
         <option value="custom">自定义</option>
       </Select>
-      <div className="grade-period-custom">
-        <TextInput
-          type="date"
-          value={value.start}
-          max={value.end}
-          onChange={(event) => onChange({ ...value, preset: "custom", start: event.target.value })}
-          aria-label="开始日期"
-        />
-        <span>至</span>
-        <TextInput
-          type="date"
-          value={value.end}
-          min={value.start}
-          onChange={(event) => onChange({ ...value, preset: "custom", end: event.target.value })}
-          aria-label="结束日期"
-        />
-      </div>
+      {compact && value.preset !== "custom" ? (
+        <span className="grade-period-summary">{rangeSummary}</span>
+      ) : (
+        <div className="grade-period-custom">
+          <TextInput
+            type="date"
+            value={value.start}
+            max={value.end}
+            onChange={(event) => onChange({ ...value, preset: "custom", start: event.target.value })}
+            aria-label="开始日期"
+          />
+          <span>至</span>
+          <TextInput
+            type="date"
+            value={value.end}
+            min={value.start}
+            onChange={(event) => onChange({ ...value, preset: "custom", end: event.target.value })}
+            aria-label="结束日期"
+          />
+        </div>
+      )}
     </div>
   );
 }

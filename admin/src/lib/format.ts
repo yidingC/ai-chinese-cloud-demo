@@ -28,6 +28,15 @@ export function formatDate(value: string, timeZone: string, language: string) {
   }).format(new Date(value));
 }
 
+export function formatMonthDay(value: string, timeZone: string, language: string) {
+  return new Intl.DateTimeFormat(language, {
+    timeZone,
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short"
+  }).format(new Date(value));
+}
+
 export function formatTime(value: string, timeZone: string, language: string) {
   return new Intl.DateTimeFormat(language, {
     timeZone,

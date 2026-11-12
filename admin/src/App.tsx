@@ -17,9 +17,11 @@ import { TeacherLiveClassPreview } from "./pages/teacher/TeacherLiveClassPreview
 import { TeacherSchedule } from "./pages/teacher/TeacherSchedule";
 
 import { TeacherSessionDesign } from "./pages/teacher/TeacherSessionDesign";
+import { TeacherInteractionLibraryEditor } from "./pages/teacher/TeacherInteractionLibraryEditor";
 import { TeacherMaterials } from "./pages/teacher/TeacherMaterials";
-import { AcademicResults, TeacherResults } from "./pages/teacher/TeacherResults";
-import { AcademicGrades, TeacherGrades } from "./pages/teacher/TeacherGrades";
+import { TeacherInteractions } from "./pages/teacher/TeacherInteractions";
+import { AcademicResults, OperatorResults, TeacherResults } from "./pages/teacher/TeacherResults";
+import { AcademicGrades, OperatorGrades, TeacherGrades } from "./pages/teacher/TeacherGrades";
 import { OperatorDashboard } from "./pages/operator/OperatorDashboard";
 import { CourseCatalog } from "./pages/operator/CourseCatalog";
 import { OperatorScheduling } from "./pages/operator/OperatorScheduling";
@@ -61,14 +63,6 @@ function SessionFocusRedirect({ basePath }: { basePath: string }) {
   return <Navigate to={`${basePath}/scheduling?focus=${encodeURIComponent(sessionId)}`} replace />;
 }
 
-/** 互动设计库已并入材料库，旧链接保留并自动切换到“我的互动设计”。 */
-function InteractionLibraryRedirect() {
-  const location = useLocation();
-  const params = new URLSearchParams(location.search);
-  params.set("library", "interactions");
-  return <Navigate to={`/teacher/materials?${params.toString()}`} replace />;
-}
-
 export default function App() {
   return (
     <HashRouter>
@@ -94,7 +88,8 @@ export default function App() {
             <Route path="schedule" element={<TeacherSchedule />} />
             <Route path="session/:sessionId" element={<SessionRosterRedirect />} />
             <Route path="session/:sessionId/design" element={<TeacherSessionDesign />} />
-            <Route path="interactions" element={<InteractionLibraryRedirect />} />
+            <Route path="interactions" element={<TeacherInteractions />} />
+            <Route path="interactions/:setId/edit" element={<TeacherInteractionLibraryEditor />} />
             <Route path="materials" element={<TeacherMaterials />} />
             <Route path="results" element={<TeacherResults />} />
             <Route path="grades" element={<TeacherGrades />} />
@@ -119,9 +114,12 @@ export default function App() {
             <Route index element={<OperatorDashboard />} />
             <Route path="catalog" element={<CourseCatalog />} />
             <Route path="scheduling" element={<OperatorScheduling />} />
+            <Route path="sessions/:sessionId/design" element={<TeacherSessionDesign mode="operator" />} />
             <Route path="sessions/:sessionId" element={<SessionFocusRedirect basePath="/operator" />} />
             <Route path="students" element={<OperatorStudents />} />
             <Route path="students/:studentId" element={<OperatorStudentDetail />} />
+            <Route path="results" element={<OperatorResults />} />
+            <Route path="grades" element={<OperatorGrades />} />
             <Route path="schools" element={<OperatorSchools />} />
             <Route path="governance" element={<Navigate to="/operator" replace />} />
             <Route path="audit" element={<Navigate to="/operator" replace />} />

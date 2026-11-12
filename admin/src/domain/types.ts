@@ -191,10 +191,34 @@ export interface ClassSession {
   liveStartedAt?: string;
   /** 老师在课堂里点「结束课堂」的时间；之后课次进入已结束。 */
   liveEndedAt?: string;
+  /** 开始上课时冻结的课堂内容；之后课件与互动都按这份快照展示。 */
+  contentSnapshot?: SessionContentSnapshot;
   /** 预约后需要教学管理审核，审核通过才占用名额并加入班级。 */
   approvalRequired?: boolean;
   cancelledAt?: string;
   cancelReason?: string;
+}
+
+export interface SessionInteractionSnapshot {
+  setId: string;
+  versionId: string;
+  phase: Phase;
+  /** 开始时冻结的轮次标题与阶段，避免课后改名影响历史课次。 */
+  title?: string;
+  /** 开始时冻结的计分口径。 */
+  countsTowardGrade?: boolean;
+}
+
+export interface SessionMaterialSnapshot {
+  materialId: string;
+  version: number;
+  phase: Phase;
+}
+
+export interface SessionContentSnapshot {
+  capturedAt: string;
+  interactions: SessionInteractionSnapshot[];
+  materials: SessionMaterialSnapshot[];
 }
 
 export interface SessionRosterEntry {
@@ -382,6 +406,16 @@ export interface InteractionSet {
   excludedSessionIds?: string[];
   /** 是否把该互动的成绩计入互动练习分类；纯投票和语音占位默认关闭。 */
   countsTowardGrade: boolean;
+  /** library = 互动库母版；lesson = 课节副本。旧数据缺省按 lesson 处理。 */
+  scope?: "library" | "lesson";
+  /** 课节副本来源的互动库母版，仅用于溯源，不实时联动。 */
+  sourceSetId?: string;
+  /** 复制时母版的版本，仅用于溯源。 */
+  sourceVersionId?: string;
+  /** 互动库标签。 */
+  tags?: string[];
+  /** 来源：旧数据迁移、老师手动新建、从库复制、互动库母版。 */
+  origin?: "legacy" | "manual" | "copied" | "library";
 }
 
 export interface GradePolicy {
@@ -424,6 +458,29 @@ export interface AssessmentScore {
 }
 
 export type InteractionTemplateLevel = "beginner" | "intermediate" | "advanced";
+
+export type InteractionRoundScenario =
+  | "warmup"
+  | "vocabulary"
+  | "sentence"
+  | "scenario"
+  | "review"
+  | "speaking";
+
+/** 一整轮可复用的互动模板；题目通过 itemTemplateIds 引用单题素材库。 */
+export interface InteractionRoundTemplate {
+  id: string;
+  title: string;
+  summary: string;
+  scenarioId: InteractionRoundScenario;
+  phase: Phase;
+  topic: string;
+  topicId: string;
+  level: InteractionTemplateLevel;
+  estimatedMinutes: number;
+  tags: string[];
+  itemTemplateIds: string[];
+}
 
 export interface InteractionTemplate {
   id: string;
@@ -470,6 +527,9 @@ export interface InteractionAttempt {
   answers: Record<string, unknown>;
   wrongItemIds: string[];
   pollAnswers: Record<string, string>;
+  /** 作答时的互动标题与计分口径；用于锁定历史成绩展示。 */
+  setTitle?: string;
+  countsTowardGrade?: boolean;
 }
 
 export interface MaterialVersion {
@@ -487,6 +547,7 @@ export interface Material {
   kind: "file" | "link" | "courseware";
   fileType: string;
   language: string;
+  tags: string[];
   ownerId: string;
   status: "published" | "unpublished";
   currentVersion: number;
@@ -573,6 +634,7 @@ export interface PlatformState {
   interactionSets: InteractionSet[];
   interactionVersions: InteractionVersion[];
   interactionTemplates: InteractionTemplate[];
+  interactionRoundTemplates: InteractionRoundTemplate[];
   interactionAttempts: InteractionAttempt[];
   gradePolicies: GradePolicy[];
   assessments: GradeAssessment[];
@@ -611,7 +673,7 @@ export interface PlatformStoreApi {
   cancelBooking(input: { bookingId: string; actorId?: string; force?: boolean; reason?: string }): StoreResult<Booking[]>;
   reviewBooking(input: { bookingId: string; decision: "approve" | "reject"; reason: string; actorId?: string }): StoreResult<Booking>;
   enrollSeries(input: { studentId: string; seriesId: string; joinAsWaitlist?: boolean; force?: boolean; reason?: string; actorId?: string }): StoreResult<Booking[] | WaitlistEntry>;
-  createClass(input: { name: string; teacherId: string; status?: "active" | "archived"; schoolId?: string; actorId?: string }): StoreResult<ClassGroup>;
+  createClass(input: { name: string; teacherId?: string; status?: "active" | "archived"; schoolId?: string; actorId?: string }): StoreResult<ClassGroup>;
   updateClass(input: { classId: string; patch: Partial<Pick<ClassGroup, "name" | "teacherId" | "status">>; actorId?: string; reason?: string }): StoreResult<ClassGroup>;
   deleteClass(input: { classId: string; actorId?: string }): StoreResult<ClassGroup>;
   addClassMembers(input: { classId: string; studentIds: string[]; actorId?: string }): StoreResult<ClassEnrollment[]>;
@@ -626,7 +688,10 @@ export interface PlatformStoreApi {
   removeSessionRosterStudent(input: { sessionId: string; studentId: string; actorId?: string }): StoreResult<SessionRosterEntry[]>;
   updateSeriesSchedule(input: { seriesId: string; schedule: Array<{ sessionId: string; startAt: string; durationMinutes?: number }>; actorId?: string; reason?: string }): StoreResult<ClassSeries>;
   cancelSession(input: { sessionId: string; actorId: string; reason?: string }): StoreResult<ClassSession>;
-  saveInteractionSet(input: Partial<InteractionSet> & { setId?: string; lessonId: string; title: string; phase: Phase; items: InteractionItem[]; countsTowardGrade?: boolean; actorId?: string; publishNote?: string }): StoreResult<{ set: InteractionSet; version: InteractionVersion }>;
+  saveInteractionSet(input: Partial<InteractionSet> & { setId?: string; lessonId: string; title: string; phase: Phase; items: InteractionItem[]; countsTowardGrade?: boolean; scope?: "library" | "lesson"; tags?: string[]; actorId?: string; publishNote?: string }): StoreResult<{ set: InteractionSet; version: InteractionVersion }>;
+  updateInteractionSetMeta(input: { setId: string; title?: string; phase?: Phase; tags?: string[]; countsTowardGrade?: boolean; actorId?: string }): StoreResult<{ set: InteractionSet }>;
+  copyInteractionSetToLesson(input: { setId: string; lessonId: string; phase?: Phase; sessionIds?: string[]; actorId?: string }): StoreResult<{ set: InteractionSet; version: InteractionVersion; source: InteractionSet }>;
+  saveInteractionSetToLibrary(input: { setId: string; versionId?: string; actorId?: string }): StoreResult<{ set: InteractionSet; version: InteractionVersion; source: InteractionSet }>;
   rollbackInteractionVersion(input: { setId: string; versionId: string; actorId?: string }): StoreResult<{ set: InteractionSet; version: InteractionVersion }>;
   assignInteractionSessions(input: { setId: string; sessionIds: string[]; actorId?: string }): StoreResult<InteractionSet>;
   excludeInteractionSession(input: { setId: string; sessionId: string; excluded: boolean; actorId?: string }): StoreResult<InteractionSet>;
@@ -645,7 +710,7 @@ export interface PlatformStoreApi {
   moveLesson(input: { lessonId: string; direction: "up" | "down"; actorId?: string }): StoreResult<Lesson[]>;
   reorderLesson(input: { lessonId: string; targetIndex: number; actorId?: string }): StoreResult<Lesson[]>;
   createStudent(input: { name: string; phone?: string; timeZone?: string; locale?: string; program?: string; level?: string; className?: string; learningGoal?: string; preferredTeacherId?: string; schoolId?: string; actorId?: string }): StoreResult<{ user: PlatformUser; profile: StudentProfile }>;
-  addMockMaterial(input: { title: string; description: string; fileType?: string; language?: string; ownerId?: string; phase?: Phase; lessonId?: string; fileName?: string; sizeLabel?: string }): StoreResult<Material>;
+  addMockMaterial(input: { title: string; description: string; fileType?: string; language?: string; tags?: string[]; ownerId?: string; phase?: Phase; lessonId?: string; fileName?: string; sizeLabel?: string }): StoreResult<Material>;
   attachMaterial(input: { materialId: string; lessonId: string; phase: Phase; order?: number; sessionIds?: string[]; actorId?: string }): StoreResult<Material>;
   detachMaterial(input: { materialId: string; lessonId: string; phase: Phase; actorId?: string }): StoreResult<Material>;
   excludeMaterialSession(input: { materialId: string; lessonId: string; phase: Phase; sessionId: string; excluded: boolean; actorId?: string }): StoreResult<Material>;

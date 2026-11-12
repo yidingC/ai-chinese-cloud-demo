@@ -12,7 +12,6 @@ import {
   Eye,
   Presentation,
   Layers3,
-  Maximize2,
   Minimize2,
   PauseCircle,
   PlayCircle,
@@ -706,50 +705,41 @@ export function TeacherLiveClass({ initialLiveRoomOpen = false }: { initialLiveR
         width="1180px"
         panelClassName="live-room-modal live-room-stage-modal"
         fullscreen={liveRoomFullscreen}
-        headerExtra={
-          <div className="live-room-header-actions">
-            <PmNote
-              kind="规则"
-              note="全对提示按学生逐个出现，文案为「姓名 本轮全对！」。本轮在线参与学生全部完成并闭环时，再播放一次「所有同学全部完成！」。"
-            >
-              <span className="live-room-title-meta">
-                {classLive && <span className="live-pulse-dot" />}
-                {classEnded ? "课堂已结束" : classLive ? "直播中" : "课堂预览"} · {snapshot.session.className}
-              </span>
-            </PmNote>
-            <Button variant="secondary" size="sm" onClick={() => setLiveRoomFullscreen((value) => !value)}>
-              {liveRoomFullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-              {liveRoomFullscreen ? "退出全屏" : "全屏投影"}
-            </Button>
-          </div>
-        }
-        footer={<Button variant="secondary" onClick={closeLiveRoom}>退出直播间</Button>}
+        hideHeader={liveRoomFullscreen}
       >
         <div className="live-room">
-          <div className="live-room-tabs" role="tablist" aria-label="课堂直播间内容">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={liveRoomTab === "courseware"}
-              className={liveRoomTab === "courseware" ? "active" : ""}
-              onClick={() => selectLiveRoomTab("courseware")}
-            >
-              <Presentation size={16} />
-              <span>课堂课件</span>
-            </button>
-            {snapshot.interactions.map((interaction, index) => (
+          <div className="live-room-topbar">
+            <div className="live-room-tabs" role="tablist" aria-label="课堂直播间内容">
               <button
                 type="button"
                 role="tab"
-                aria-selected={liveRoomTab === interaction.id}
-                className={liveRoomTab === interaction.id ? "active" : ""}
-                key={interaction.id}
-                onClick={() => selectLiveRoomTab(interaction.id)}
+                aria-selected={liveRoomTab === "courseware"}
+                className={liveRoomTab === "courseware" ? "active" : ""}
+                onClick={() => selectLiveRoomTab("courseware")}
               >
-                <BarChart3 size={16} />
-                <span>轮次 {index + 1}</span>
+                <Presentation size={16} />
+                <span>课堂课件</span>
               </button>
-            ))}
+              {snapshot.interactions.map((interaction, index) => (
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={liveRoomTab === interaction.id}
+                  className={liveRoomTab === interaction.id ? "active" : ""}
+                  key={interaction.id}
+                  onClick={() => selectLiveRoomTab(interaction.id)}
+                >
+                  <BarChart3 size={16} />
+                  <span>轮次 {index + 1}</span>
+                </button>
+              ))}
+            </div>
+            {liveRoomFullscreen && (
+              <Button className="live-room-exit-fullscreen" variant="secondary" size="sm" onClick={closeLiveRoom}>
+                <Minimize2 size={15} />
+                退出全屏
+              </Button>
+            )}
           </div>
 
           {liveRoomTab === "courseware" ? (
@@ -767,32 +757,28 @@ export function TeacherLiveClass({ initialLiveRoomOpen = false }: { initialLiveR
                   )}
                   {coursewareSlides[coursewareSlideIndex].note && <small className="courseware-slide-note">{coursewareSlides[coursewareSlideIndex].note}</small>}
                   <span className="courseware-slide-page">{coursewareSlideIndex + 1}</span>
+                  <div className="courseware-slide-nav" role="group" aria-label="课件翻页">
+                    <button
+                      type="button"
+                      className="is-prev"
+                      aria-label="上一页"
+                      disabled={coursewareSlideIndex === 0}
+                      onClick={() => setCoursewareSlideIndex((value) => Math.max(0, value - 1))}
+                    >
+                      <ChevronLeft size={32} />
+                    </button>
+                    <button
+                      type="button"
+                      className="is-next"
+                      aria-label="下一页"
+                      disabled={coursewareSlideIndex >= coursewareSlides.length - 1}
+                      onClick={() => setCoursewareSlideIndex((value) => Math.min(coursewareSlides.length - 1, value + 1))}
+                    >
+                      <ChevronRight size={32} />
+                    </button>
+                  </div>
                 </article>
               )}
-
-              <div className="courseware-deck-footer">
-                <div className="courseware-thumbnails" aria-label="课件缩略页">
-                  {coursewareSlides.map((slide, index) => (
-                    <button
-                      className={index === coursewareSlideIndex ? "active" : ""}
-                      key={slide.id}
-                      onClick={() => setCoursewareSlideIndex(index)}
-                      title={slide.title}
-                    >
-                      <span>{index + 1}</span>
-                      <strong>{slide.title}</strong>
-                    </button>
-                  ))}
-                </div>
-                <div className="courseware-deck-nav">
-                  <Button size="icon" variant="secondary" disabled={coursewareSlideIndex === 0} onClick={() => setCoursewareSlideIndex((value) => Math.max(0, value - 1))} aria-label="上一页">
-                    <ChevronLeft size={17} />
-                  </Button>
-                  <Button size="icon" variant="secondary" disabled={coursewareSlideIndex >= coursewareSlides.length - 1} onClick={() => setCoursewareSlideIndex((value) => Math.min(coursewareSlides.length - 1, value + 1))} aria-label="下一页">
-                    <ChevronRight size={17} />
-                  </Button>
-                </div>
-              </div>
             </div>
           ) : liveRoomInteraction && liveRoomRound ? (
             <div className="live-room-interaction-layout">

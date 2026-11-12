@@ -921,6 +921,7 @@ export function OperatorScheduling({
               state={state}
               session={session}
               focused={focusedSessionId === session.id}
+              onViewDesign={academic ? undefined : () => navigate(`/operator/sessions/${session.id}/design`)}
               actions={academic
                 ? (
                   <>
@@ -937,6 +938,14 @@ export function OperatorScheduling({
                 )
                 : (
                   <>
+                    {session.status === "published" && new Date(session.endAt).getTime() < Date.now() && (
+                      <Button
+                        variant="ghost"
+                        onClick={() => navigate(`/operator/results?school=${encodeURIComponent(session.schoolId)}&sessionId=${encodeURIComponent(session.id)}`)}
+                      >
+                        课堂表现
+                      </Button>
+                    )}
                     {canRescheduleSession(session) && (
                       <Button variant="ghost" className="operator-session-edit" onClick={() => openEditSession(session.id)}>编辑</Button>
                     )}

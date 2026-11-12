@@ -135,6 +135,56 @@ describe("grade analytics", () => {
     expect(teacher.compositeAverage).not.toBeNull();
   });
 
+  it("scopes a single-session view to that session and leaves class assessments out", () => {
+    const range = relativeGradeRange("Asia/Jakarta", 30);
+    const state = platform.getState();
+    const classAnalytics = buildGradeAnalytics(state, range, { classId: "class-1" });
+    const sessionAnalytics = buildGradeAnalytics(state, range, {
+      classId: "class-1",
+      sessionId: "session-past"
+    });
+
+    expect(sessionAnalytics.records.length).toBeGreaterThan(0);
+    expect(sessionAnalytics.records.every((record) => record.sessionId === "session-past")).toBe(true);
+    expect(sessionAnalytics.categoryAverages.homework.count).toBe(0);
+    expect(sessionAnalytics.categoryAverages.exam.count).toBe(0);
+    expect(sessionAnalytics.records.length).toBeLessThan(classAnalytics.records.length);
+  });
+
+  it("keeps each interaction record on the version that was answered", () => {
+    const before = platform.getState();
+    const set = before.interactionSets.find((item) => item.id === "set-greetings-review")!;
+    const answeredVersionId = set.currentVersionId;
+    const answeredVersion = before.interactionVersions.find((version) => version.id === answeredVersionId)!;
+
+    const recorded = platform.recordAttempt({
+      setId: set.id,
+      studentId: "student-anisa",
+      sessionId: "session-past",
+      phase: "review",
+      answers: {},
+      score: 88,
+      timeSpentSeconds: 20
+    });
+    expect(recorded.ok).toBe(true);
+
+    platform.saveInteractionSet({
+      setId: set.id,
+      lessonId: set.lessonId,
+      title: "课后改名不应影响成绩",
+      phase: "review",
+      items: answeredVersion.items.slice(0, 1),
+      actorId: "teacher-lina"
+    });
+
+    const range = relativeGradeRange("Asia/Jakarta", 30);
+    const student = buildGradeAnalytics(platform.getState(), range, { studentId: "student-anisa" }).students[0];
+    const record = student.records.find((item) => item.sourceId === set.id)!;
+    expect(record.versionId).toBe(answeredVersionId);
+    expect(record.title).toBe("课后复习挑战");
+    expect(record.normalizedScore).toBe(88);
+  });
+
   it("uses the policy effective at the end of the selected range", () => {
     const now = Date.now();
     platform.saveGradePolicy({
@@ -210,6 +260,27 @@ describe("grade analytics", () => {
         : null;
       expect(dimension.score).toBe(expected);
     });
+  });
+
+  it("scopes all grade metrics to a searched student set", () => {
+    const state = platform.getState();
+    const range = relativeGradeRange("Asia/Jakarta", 30);
+    const all = buildGradeAnalytics(state, range, { teacherId: "teacher-lina" });
+    expect(all.students.length).toBeGreaterThan(0);
+    const selected = all.students[0];
+
+    const filtered = buildGradeAnalytics(state, range, {
+      teacherId: "teacher-lina",
+      studentIds: [selected.studentId]
+    });
+    expect(filtered.students.map((student) => student.studentId)).toEqual([selected.studentId]);
+    expect(filtered.records.every((record) => record.studentId === selected.studentId)).toBe(true);
+    expect(filtered.compositeAverage).toBe(selected.composite);
+
+    const empty = buildGradeAnalytics(state, range, { teacherId: "teacher-lina", studentIds: [] });
+    expect(empty.students).toHaveLength(0);
+    expect(empty.records).toHaveLength(0);
+    expect(empty.compositeAverage).toBeNull();
   });
 
   it("ships recent demo records for every grade category", () => {

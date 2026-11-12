@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Download, Eye, FileAudio, FileImage, FileText, FileVideo, Link2, Pause, Play, PlayCircle, Presentation } from "lucide-react";
 import type { Material } from "../domain/types";
+import { isMaterialUsageTag, orderMaterialTags } from "../lib/materialTags";
 import { Badge, Button } from "./ui";
 
 export function MaterialCard({
@@ -11,6 +12,7 @@ export function MaterialCard({
   onOpen,
   onPlay,
   onView,
+  showTags = false,
   playing = false,
   showVersion = false
 }: {
@@ -21,6 +23,8 @@ export function MaterialCard({
   onPlay?: () => void;
   /** 传入后卡片主操作为“查看详情”，下载退化成右侧的 icon 按钮。 */
   onView?: () => void;
+  /** 材料库展示标签；学生端和课节内容保持简洁，不默认展示。 */
+  showTags?: boolean;
   playing?: boolean;
   showVersion?: boolean;
 }) {
@@ -40,6 +44,7 @@ export function MaterialCard({
   const current = material.versions.find((version) => version.version === material.currentVersion) ?? material.versions.at(-1);
   const isAudio = material.fileType === "wav" || material.fileType === "mp3";
   const canDownload = Boolean(current?.url) || material.kind === "file";
+  const orderedTags = orderMaterialTags(material.tags);
 
   function downloadMaterial() {
     onDownload?.();
@@ -62,6 +67,14 @@ export function MaterialCard({
           {material.status !== "published" && <Badge tone="danger">{t("student.materialCard.unpublished")}</Badge>}
         </div>
         <p>{material.description}</p>
+        {showTags && orderedTags.length > 0 && (
+          <div className="material-card-tags" aria-label="材料标签">
+            {orderedTags.slice(0, 3).map((tag) => (
+              <span className={isMaterialUsageTag(tag) ? "is-usage" : ""} key={tag}>{tag}</span>
+            ))}
+            {orderedTags.length > 3 && <span>+{orderedTags.length - 3}</span>}
+          </div>
+        )}
         <div className="material-meta">
           {showVersion && <span>v{material.currentVersion}</span>}
           <span>{current?.sizeLabel ?? t("student.materialCard.externalLink")}</span>

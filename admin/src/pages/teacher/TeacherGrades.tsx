@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { BarChart3, FileCheck2, GraduationCap, ListChecks, Search, TrendingUp } from "lucide-react";
 import { AssessmentQuestionModal } from "../../components/AssessmentQuestionModal";
 import { GradeAnalysisCards, GradeDetailsCard } from "../../components/GradeAnalyticsPanels";
 import { GradePeriodPicker } from "../../components/GradePeriodPicker";
+import { OperatorSchoolSelect, SchoolScopeLabel, useOperatorSchoolScope } from "../../components/OperatorSchoolScope";
 import { Avatar, Badge, Button, Card, EmptyState, Modal, PageHeader, ProgressBar, Select, StatCard, TextInput } from "../../components/ui";
 import type { AssessmentCategory, ClassGroup, GradeCategory, PlatformState } from "../../domain/types";
 import { getAcademicSchoolId, workspaceState } from "../../lib/academicScope";
@@ -34,7 +35,7 @@ function scoreValue(value: number | null) {
   return value === null ? "--" : value;
 }
 
-type GradesVariant = "teacher" | "academic";
+type GradesVariant = "teacher" | "academic" | "operator";
 
 export function GradesWorkspace({
   state,
@@ -42,7 +43,8 @@ export function GradesWorkspace({
   variant,
   schoolName,
   teacherId,
-  schoolId
+  schoolId,
+  schoolControl
 }: {
   state: PlatformState;
   classes: ClassGroup[];
@@ -50,8 +52,10 @@ export function GradesWorkspace({
   schoolName?: string;
   teacherId?: string;
   schoolId?: string;
+  schoolControl?: ReactNode;
 }) {
   const academic = variant === "academic";
+  const oversight = variant === "academic" || variant === "operator";
   const [range, setRange] = useState(() => defaultGradeRange(state.ui.timeZone));
   const [tab, setTab] = useState<"students" | GradeCategory>("students");
   const [dimension, setDimension] = useState<"student" | "content">("student");
@@ -67,19 +71,49 @@ export function GradesWorkspace({
 
   const selectedClass = classes.find((item) => item.id === classId) ?? null;
   const summaryTitle = selectedClass
-    ? `${selectedClass.name}学生成绩汇总`
-    : academic
-      ? `${schoolName ?? "本校"}学生成绩汇总`
-      : "全部学生成绩汇总";
-  const allScopeLabel = academic ? "本校" : "全部";
+    ? `${selectedClass.name}学生成绩明细`
+    : oversight
+      ? `${schoolName ?? "本校"}学生成绩明细`
+      : "学生成绩明细";
+  const allScopeLabel = oversight ? "本校" : "全部";
   const analytics = useMemo(
     () => buildGradeAnalytics(state, range, { teacherId, schoolId, classId: classId || undefined }),
     [classId, range, schoolId, state, teacherId]
   );
   const filteredStudents = analytics.students.filter((student) => {
     const keyword = query.trim().toLowerCase();
-    return !keyword || `${student.name} ${student.level} ${student.courseLabel} ${student.classLabel}`.toLowerCase().includes(keyword);
+    return !keyword || `${student.name} ${student.level} ${student.classLabel}`.toLowerCase().includes(keyword);
   });
+  const statistics = [
+    {
+      label: "综合均分",
+      value: scoreValue(analytics.compositeAverage),
+      detail: `${analytics.students.length} 位学生`,
+      icon: <BarChart3 size={20} />,
+      tone: "purple" as const
+    },
+    {
+      label: "互动均分",
+      value: scoreValue(analytics.categoryAverages.interaction.average),
+      detail: `${analytics.categoryAverages.interaction.count} 项最佳成绩`,
+      icon: <TrendingUp size={20} />,
+      tone: "mint" as const
+    },
+    {
+      label: "作业均分",
+      value: scoreValue(analytics.categoryAverages.homework.average),
+      detail: `${analytics.categoryAverages.homework.count} 项`,
+      icon: <FileCheck2 size={20} />,
+      tone: "orange" as const
+    },
+    {
+      label: "考试均分",
+      value: scoreValue(analytics.categoryAverages.exam.average),
+      detail: `${analytics.categoryAverages.exam.count} 项`,
+      icon: <GraduationCap size={20} />,
+      tone: "blue" as const
+    }
+  ];
   const detailStudent = analytics.students.find((item) => item.studentId === detailStudentId) ?? null;
   const bounds = gradeRangeBounds(range);
   const assessments = state.assessments
@@ -168,60 +202,30 @@ export function GradesWorkspace({
     setDetailStudentId(studentId);
   }
 
-  const statistics = [
-    {
-      label: "综合均分",
-      value: scoreValue(analytics.compositeAverage),
-      detail: "按有效类别权重归一化",
-      icon: <BarChart3 size={20} />,
-      tone: "purple" as const
-    },
-    {
-      label: "互动均分",
-      value: scoreValue(analytics.categoryAverages.interaction.average),
-      detail: `${analytics.categoryAverages.interaction.count} 项最佳成绩`,
-      icon: <TrendingUp size={20} />,
-      tone: "mint" as const
-    },
-    {
-      label: "作业均分",
-      value: scoreValue(analytics.categoryAverages.homework.average),
-      detail: `${analytics.categoryAverages.homework.count} 项`,
-      icon: <FileCheck2 size={20} />,
-      tone: "orange" as const
-    },
-    {
-      label: "考试均分",
-      value: scoreValue(analytics.categoryAverages.exam.average),
-      detail: `${analytics.categoryAverages.exam.count} 项`,
-      icon: <GraduationCap size={20} />,
-      tone: "blue" as const
-    }
-  ];
+  const schoolScope = schoolControl ?? (oversight && schoolName ? <SchoolScopeLabel name={schoolName} /> : null);
 
   return (
     <>
       <PageHeader
-        eyebrow={academic ? "School gradebook" : "Student gradebook"}
+        eyebrow={oversight ? "School gradebook" : "Student gradebook"}
         title="学生成绩"
-        description={academic
-          ? `${schoolName ?? "本校"}全部班级的互动、作业与考试成绩；学校教务只读查看，可按时间、班级或学生筛选。`
-          : "按时间范围汇总本人所教学生的互动、作业与考试成绩。"}
-        actions={academic ? <Badge tone="mint">只读查看</Badge> : undefined}
+        description={variant === "academic"
+          ? `${schoolName ?? "本校"}全部班级的互动、作业与考试成绩；学校教务可查看，并按班级、时间或学生筛选。`
+          : variant === "operator"
+            ? `${schoolName ?? "当前学校"}全部班级的互动、作业与考试成绩；运营可切换学校，并按班级、时间或学生筛选。`
+            : "按时间范围汇总本人所教学生的互动、作业与考试成绩。"}
       />
 
-      <Card className="content-filter-bar grade-filter-bar">
-        <GradePeriodPicker value={range} onChange={setRange} />
+      <Card className={`content-filter-bar results-filter-bar grade-filter-bar ${range.preset === "custom" ? "has-custom-period" : ""}`.trim()}>
+        {schoolScope}
         <Select value={classId} onChange={(event) => setClassId(event.target.value)} aria-label="按班级筛选">
           <option value="">全部班级</option>
           {classes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
         </Select>
+        <GradePeriodPicker value={range} onChange={setRange} compact={oversight} />
         <div className="search-box">
           <Search size={16} />
-          <TextInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索学生或等级" />
-        </div>
-        <div className="grade-weight-chip">
-          当前权重：互动 {analytics.policy.weights.interaction}% · 作业 {analytics.policy.weights.homework}% · 考试 {analytics.policy.weights.exam}%
+          <TextInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索学生、等级或班级" aria-label="搜索学生、等级或班级" />
         </div>
       </Card>
 
@@ -262,17 +266,16 @@ export function GradesWorkspace({
       {tab === "students" && (
         <Card className="grade-table-card">
           <div className="grade-table-heading">
-            <div><h2>{summaryTitle}</h2><p>同一互动取时间范围内最好成绩；没有有效成绩的类别不占权重。</p></div>
+            <div><h2>{summaryTitle}</h2><p>点击学生查看个人成绩趋势、能力雷达与成绩明细。</p></div>
             <Badge tone="purple">{filteredStudents.length} 位学生</Badge>
           </div>
           <div className="data-table grade-student-table">
             <div className="data-table-head">
-              <span>学生</span><span>课程</span><span>班级</span><span>综合</span><span>互动</span><span>作业</span><span>考试</span><span>状态</span>
+              <span>学生</span><span>班级</span><span>综合</span><span>互动</span><span>作业</span><span>考试</span><span>状态</span>
             </div>
             {filteredStudents.map((student) => (
               <button className="data-table-row" key={student.studentId} onClick={() => openStudentDetail(student.studentId, "interaction")}>
                 <span className="grade-student-cell"><Avatar label={student.avatar} size="sm" /><span><strong>{student.name}</strong><small>{student.level}</small></span></span>
-                <span>{student.courseLabel}</span>
                 <span>{student.classLabel}</span>
                 <span><strong className={`grade-score score-${scoreTone(student.composite)}`}>{scoreValue(student.composite)}</strong></span>
                 <span>{scoreValue(student.categories.interaction.average)}</span>
@@ -287,7 +290,7 @@ export function GradesWorkspace({
               </button>
             ))}
           </div>
-          {filteredStudents.length === 0 && <EmptyState title="这段时间没有学生成绩" description={academic ? "调整时间或班级后重试；成绩由任课教师录入后自动汇总。" : "调整时间或班级后重试，也可以发布一项正式考核。"} />}
+          {filteredStudents.length === 0 && <EmptyState title="这段时间没有学生成绩" description={oversight ? "调整时间或班级后重试；成绩由任课教师录入后自动汇总。" : "调整时间或班级后重试，也可以发布一项正式考核。"} />}
         </Card>
       )}
 
@@ -472,7 +475,6 @@ export function AcademicGrades() {
           eyebrow="School gradebook"
           title="学生成绩"
           description="学校教务只能查看所属学校的学生成绩。"
-          actions={<Badge tone="mint">只读查看</Badge>}
         />
         <EmptyState title="当前账号未关联学校" description="请联系教学管理配置学校成员关系后再查看成绩。" />
       </>
@@ -486,6 +488,48 @@ export function AcademicGrades() {
       variant="academic"
       schoolId={schoolId}
       schoolName={state.schools[0]?.name}
+    />
+  );
+}
+
+export function OperatorGrades() {
+  const rawState = usePlatformStore((store) => store.state);
+  const { schools, selectedSchoolId, selectedSchool, selectSchool } = useOperatorSchoolScope(rawState);
+  const state = useMemo(() => workspaceState(rawState, selectedSchoolId), [rawState, selectedSchoolId]);
+  const classes = useMemo(
+    () => state.classes.filter((item) => item.status === "active"),
+    [state.classes]
+  );
+
+  if (!selectedSchoolId) {
+    return (
+      <>
+        <PageHeader
+          eyebrow="School gradebook"
+          title="学生成绩"
+          description="运营端暂无可查看的学校。"
+        />
+        <EmptyState title="暂无可用学校" description="请先在学校与教职工中创建或启用学校。" />
+      </>
+    );
+  }
+
+  return (
+    <GradesWorkspace
+      key={selectedSchoolId}
+      state={state}
+      classes={classes}
+      variant="operator"
+      schoolId={selectedSchoolId}
+      schoolName={selectedSchool?.name}
+      schoolControl={
+        <OperatorSchoolSelect
+          className="results-scope-select"
+          schools={schools}
+          schoolId={selectedSchoolId}
+          onChange={selectSchool}
+        />
+      }
     />
   );
 }

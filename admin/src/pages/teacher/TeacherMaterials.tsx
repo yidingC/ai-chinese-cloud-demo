@@ -1,25 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Navigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { CalendarPlus, FileText, Search, Sparkles, UploadCloud } from "lucide-react";
+import { FileText, Plus, Search, UploadCloud, X } from "lucide-react";
 import { platform } from "../../lib/platform";
 import { usePlatformStore } from "../../store/usePlatformStore";
-import { currentUser, getTeacherSessions, scopeLabel } from "../../lib/domain";
-import type { InteractionType, Material, Phase } from "../../domain/types";
-import { Badge, Button, Card, EmptyState, Field, Modal, PageHeader, Select, Tabs, TextInput } from "../../components/ui";
+import { currentUser, getTeacherSessions } from "../../lib/domain";
+import { isMaterialUsageTag, materialTagPriority, orderMaterialTags } from "../../lib/materialTags";
+import type { Material } from "../../domain/types";
+import { Button, Card, EmptyState, Field, Modal, PageHeader, Select, TextInput } from "../../components/ui";
 import { MaterialCard } from "../../components/MaterialCard";
-import { MaterialLessonConfigModal } from "../../components/MaterialLessonConfigModal";
 import { PmNote } from "../../components/PmNote";
-import { INTERACTION_TYPE_SHORT_LABELS } from "../../lib/interactionTypes";
-import { orderTemplatesForBrowse, templateLevelLabel } from "../../lib/templateLibrary";
-import { TemplateTypeChips } from "../../components/TemplateTypeChips";
-import { TeacherInteractions } from "./TeacherInteractions";
-
-type PhaseTab = "all" | Phase;
-type LibraryTab = "materials" | "interactions" | "templates";
-
-const templateTypeLabels: Record<InteractionType, string> = INTERACTION_TYPE_SHORT_LABELS;
-const phaseLabels: Record<Phase, string> = { preview: "课前", live: "课中", review: "复习" };
 
 type MaterialTypeKey = "pdf" | "pptx" | "audio" | "video" | "image" | "courseware" | "other";
 
@@ -45,37 +35,32 @@ function materialTypeKey(material: Material): MaterialTypeKey {
   return "other";
 }
 
+function cleanMaterialTags(tags: string[]) {
+  return [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))];
+}
+
+function splitMaterialTags(value: string) {
+  return cleanMaterialTags(value.split(/[,，]/u));
+}
+
 export function TeacherMaterials() {
   const { t } = useTranslation();
   const { state, run } = usePlatformStore();
-  const navigate = useNavigate();
   const user = currentUser(state);
   const teacherSessions = getTeacherSessions(state, user.id);
   const lessonIds = [...new Set(teacherSessions.map((session) => session.lessonId))];
-  const teacherSets = state.interactionSets.filter((set) => lessonIds.includes(set.lessonId));
   const [searchParams, setSearchParams] = useSearchParams();
-  const [tab, setTab] = useState<PhaseTab>("all");
   const [typeFilter, setTypeFilter] = useState<MaterialTypeKey[]>([]);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [query, setQuery] = useState("");
-  const [libraryTab, setLibraryTab] = useState<LibraryTab>(() => searchParams.get("library") === "interactions" ? "interactions" : "materials");
-  const [templateQuery, setTemplateQuery] = useState("");
-  const [templateType, setTemplateType] = useState<InteractionType | "all">("all");
-  const [templateVisible, setTemplateVisible] = useState(12);
+  const [tagDraft, setTagDraft] = useState("");
   const [uploadOpen, setUploadOpen] = useState(false);
-  const [configMaterialId, setConfigMaterialId] = useState<string | null>(null);
   const [previewMaterialId, setPreviewMaterialId] = useState<string | null>(null);
-  const configMaterial = state.materials.find((material) => material.id === configMaterialId) ?? null;
-  const teacherLessons = lessonIds
-    .map((lessonId) => state.lessons.find((lesson) => lesson.id === lessonId))
-    .filter((lesson): lesson is NonNullable<typeof lesson> => Boolean(lesson));
   const previewMaterial = state.materials.find((material) => material.id === previewMaterialId);
   const previewVersion = previewMaterial
     ? previewMaterial.versions.find((version) => version.version === previewMaterial.currentVersion) ?? previewMaterial.versions.at(-1)
     : undefined;
   const previewUrl = previewVersion?.url ?? previewMaterial?.externalUrl ?? "";
-  const previewRefs = previewMaterial
-    ? state.materialRefs.filter((ref) => ref.materialId === previewMaterial.id && lessonIds.includes(ref.lessonId))
-    : [];
   const previewKind = previewMaterial
     ? previewMaterial.fileType === "png" || previewMaterial.fileType === "image"
       ? "image"
@@ -85,19 +70,6 @@ export function TeacherMaterials() {
           ? "frame"
           : "external"
     : "external";
-
-  // 互动设计库深链会直接打开“我的互动设计”页签。
-  useEffect(() => {
-    if (searchParams.get("library") === "interactions") setLibraryTab("interactions");
-  }, [searchParams]);
-
-  function changeLibraryTab(value: LibraryTab) {
-    setLibraryTab(value);
-    const next = new URLSearchParams(searchParams);
-    if (value === "interactions") next.set("library", "interactions");
-    else next.delete("library");
-    setSearchParams(next, { replace: true });
-  }
 
   // 从首页“最近添加”跳进来时，直接打开这条材料的预览。
   useEffect(() => {
@@ -109,17 +81,25 @@ export function TeacherMaterials() {
     setSearchParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
+
   const [form, setForm] = useState({
     title: "",
     description: "",
     fileType: "pdf",
     language: "zh-id",
-    lessonId: lessonIds[0] ?? state.lessons[0]?.id ?? "",
-    phase: "preview" as Phase,
-    fileName: ""
+    fileName: "",
+    tags: [] as string[]
   });
 
-  // 先取“我能看到的材料”，再做阶段 / 类型 / 关键词筛选，类型下拉的计数才稳定。
+  // 旧版把互动库挂在材料页的 ?library=interactions 下，统一送去新的互动库入口。
+  if (searchParams.get("library") === "interactions") {
+    const next = new URLSearchParams(searchParams);
+    next.delete("library");
+    const queryString = next.toString();
+    return <Navigate to={`/teacher/interactions${queryString ? `?${queryString}` : ""}`} replace />;
+  }
+
+  // 先取“我能看到的材料”，再做类型 / 关键词筛选，类型下拉的计数才稳定。
   const scopedMaterials = state.materials.filter((material) => {
     const refs = state.materialRefs.filter((ref) => ref.materialId === material.id && lessonIds.includes(ref.lessonId));
     return material.ownerId === user.id || refs.length > 0;
@@ -130,34 +110,46 @@ export function TeacherMaterials() {
     return counts;
   }, {});
   const materialTypeOptions = materialTypeOrder.filter((item) => (typeCounts[item.key] ?? 0) > 0);
-  const phaseCount = (phase: Phase) =>
-    scopedMaterials.filter((material) =>
-      state.materialRefs.some((ref) => ref.materialId === material.id && lessonIds.includes(ref.lessonId) && ref.phase === phase)
-    ).length;
+  const tagCounts = scopedMaterials.reduce<Record<string, number>>((counts, material) => {
+    material.tags.forEach((tag) => {
+      counts[tag] = (counts[tag] ?? 0) + 1;
+    });
+    return counts;
+  }, {});
+  const availableTags = Object.entries(tagCounts).sort(
+    ([leftTag, leftCount], [rightTag, rightCount]) => {
+      const priorityDifference = materialTagPriority(leftTag) - materialTagPriority(rightTag);
+      return priorityDifference || rightCount - leftCount || leftTag.localeCompare(rightTag, "zh-CN");
+    }
+  );
+  const usageTagOptions = availableTags.filter(([tag]) => isMaterialUsageTag(tag));
+  const topicTagOptions = availableTags.filter(([tag]) => !isMaterialUsageTag(tag));
   const filteredByType = typeFilter.length
     ? scopedMaterials.filter((material) => typeFilter.includes(materialTypeKey(material)))
     : scopedMaterials;
-  const materials = filteredByType.filter((material) => {
-    const refs = state.materialRefs.filter((ref) => ref.materialId === material.id && lessonIds.includes(ref.lessonId));
-    const phaseMatch = tab === "all" || refs.some((ref) => ref.phase === tab);
-    const queryMatch = !query || material.title.toLowerCase().includes(query.toLowerCase()) || material.description.toLowerCase().includes(query.toLowerCase());
-    return phaseMatch && queryMatch;
+  const filteredByTag = selectedTags.length
+    ? filteredByType.filter((material) => material.tags.some((tag) => selectedTags.includes(tag)))
+    : filteredByType;
+  const normalizedQuery = query.trim().toLowerCase();
+  const materials = filteredByTag.filter((material) => {
+    const queryMatch =
+      !normalizedQuery ||
+      material.title.toLowerCase().includes(normalizedQuery) ||
+      material.description.toLowerCase().includes(normalizedQuery) ||
+      material.tags.some((tag) => tag.toLowerCase().includes(normalizedQuery));
+    return queryMatch;
   });
 
-  const templates = useMemo(() => {
-    const keyword = templateQuery.trim().toLowerCase();
-    const matched = state.interactionTemplates.filter((template) => {
-      const typeMatch = templateType === "all" || template.type === templateType;
-      const queryMatch =
-        !keyword ||
-        template.title.toLowerCase().includes(keyword) ||
-        template.topic.toLowerCase().includes(keyword) ||
-        template.summary.toLowerCase().includes(keyword) ||
-        template.tags.join(" ").toLowerCase().includes(keyword);
-      return typeMatch && queryMatch;
-    });
-    return orderTemplatesForBrowse(matched, templateType);
-  }, [state.interactionTemplates, templateQuery, templateType]);
+  function addFormTags(value: string) {
+    const additions = splitMaterialTags(value);
+    if (!additions.length) return;
+    setForm((current) => ({ ...current, tags: orderMaterialTags(cleanMaterialTags([...current.tags, ...additions])) }));
+    setTagDraft("");
+  }
+
+  function removeFormTag(tag: string) {
+    setForm((current) => ({ ...current, tags: current.tags.filter((item) => item !== tag) }));
+  }
 
   function saveUpload() {
     if (!form.title.trim()) return;
@@ -168,17 +160,17 @@ export function TeacherMaterials() {
           description: form.description,
           fileType: form.fileType,
           language: form.language,
+          tags: orderMaterialTags(cleanMaterialTags([...form.tags, ...splitMaterialTags(tagDraft)])),
           ownerId: user.id,
-          lessonId: form.lessonId,
-          phase: form.phase,
           fileName: form.fileName || `${form.title}.${form.fileType}`,
           sizeLabel: "36 KB"
         }),
-      "上传完成，材料已关联课节"
+      "上传完成，材料已进入材料库"
     );
     if (result.ok) {
       setUploadOpen(false);
-      setForm((value) => ({ ...value, title: "", description: "", fileName: "" }));
+      setForm((value) => ({ ...value, title: "", description: "", fileName: "", tags: [] }));
+      setTagDraft("");
     }
   }
 
@@ -187,78 +179,104 @@ export function TeacherMaterials() {
       <PageHeader
         eyebrow="Material library"
         title={t("teacher.materialLibrary")}
+        description="文件与外链材料统一入库，用途与主题标签并存；材料在课节中的使用方式仍由课节设计决定。"
         actions={
-          libraryTab === "materials" ? (
-            <PmNote kind="注意" note="上传材料暂不开放，现阶段先使用已有材料配置课堂。">
-              <Button disabled><UploadCloud size={17} /> 上传材料</Button>
-            </PmNote>
-          ) : undefined
+          <Button onClick={() => setUploadOpen(true)}><UploadCloud size={17} /> 上传材料</Button>
         }
       />
 
-      <Card className="content-filter-bar library-tab-bar">
-        <Tabs
-          value={libraryTab}
-          onChange={(value) => changeLibraryTab(value as LibraryTab)}
-          items={[
-            { value: "materials", label: "课程材料", count: scopedMaterials.length },
-            { value: "templates", label: "预制互动模板库", count: state.interactionTemplates.length },
-            { value: "interactions", label: "我的互动设计", count: teacherSets.length }
-          ]}
-        />
-        <span className="library-tab-hint">
-          {libraryTab === "materials"
-            ? "文件与外链材料，按课前 / 课中 / 复习关联到课节。"
-            : libraryTab === "interactions"
-              ? "你准备过的全部互动设计，可预览、配置课次或继续编辑。"
-              : "题型 × 主题 × 难度生成的预制模板，可直接用于互动设计。"}
-        </span>
-      </Card>
-
-      {libraryTab === "interactions" && <TeacherInteractions embedded />}
-
-      {libraryTab === "materials" && (
-      <>
       <Card className="content-filter-bar library-filter-bar">
-        <div className="library-filter-group">
-          <Tabs
-            value={tab}
-            onChange={setTab}
-            items={[
-              { value: "all", label: "全部", count: scopedMaterials.length },
-              { value: "preview", label: "课前", count: phaseCount("preview") },
-              { value: "live", label: "课中", count: phaseCount("live") },
-              { value: "review", label: "复习", count: phaseCount("review") }
-            ]}
-          />
-          <div className="material-type-chips" role="group" aria-label="按文件类型筛选">
-            <button
-              type="button"
-              className={typeFilter.length === 0 ? "active" : ""}
-              aria-pressed={typeFilter.length === 0}
-              onClick={() => setTypeFilter([])}
-            >
-              全部类型<span className="material-type-count">{scopedMaterials.length}</span>
-            </button>
-            {materialTypeOptions.map((item) => {
-              const active = typeFilter.includes(item.key);
-              return (
-                <button
-                  key={item.key}
-                  type="button"
-                  className={active ? "active" : ""}
-                  aria-pressed={active}
-                  onClick={() =>
-                    setTypeFilter((value) =>
-                      value.includes(item.key) ? value.filter((key) => key !== item.key) : [...value, item.key]
-                    )
-                  }
-                >
-                  {item.label}<span className="material-type-count">{typeCounts[item.key]}</span>
-                </button>
-              );
-            })}
+        <div className="library-filter-stack">
+          <div className="library-filter-group">
+            <div className="material-type-chips" role="group" aria-label="按文件类型筛选">
+              <button
+                type="button"
+                className={typeFilter.length === 0 ? "active" : ""}
+                aria-pressed={typeFilter.length === 0}
+                onClick={() => setTypeFilter([])}
+              >
+                全部类型<span className="material-type-count">{scopedMaterials.length}</span>
+              </button>
+              {materialTypeOptions.map((item) => {
+                const active = typeFilter.includes(item.key);
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    className={active ? "active" : ""}
+                    aria-pressed={active}
+                    onClick={() =>
+                      setTypeFilter((value) =>
+                        value.includes(item.key) ? value.filter((key) => key !== item.key) : [...value, item.key]
+                      )
+                    }
+                  >
+                    {item.label}<span className="material-type-count">{typeCounts[item.key]}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
+          {availableTags.length > 0 && (
+            <div className="material-tag-filters" role="group" aria-label="按标签筛选">
+              <div className="material-tag-filter material-tag-filter-usage" role="group" aria-label="按用途标签筛选">
+                <span className="material-tag-filter-label">用途</span>
+                <div className="material-tag-chips">
+                  <button
+                    type="button"
+                    className={selectedTags.length === 0 ? "active" : ""}
+                    aria-pressed={selectedTags.length === 0}
+                    onClick={() => setSelectedTags([])}
+                  >
+                    全部标签<span className="material-tag-count">{scopedMaterials.length}</span>
+                  </button>
+                  {usageTagOptions.map(([tag, count]) => {
+                    const active = selectedTags.includes(tag);
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        className={active ? "active" : ""}
+                        aria-pressed={active}
+                        onClick={() =>
+                          setSelectedTags((value) =>
+                            value.includes(tag) ? value.filter((item) => item !== tag) : [...value, tag]
+                          )
+                        }
+                      >
+                        {tag}<span className="material-tag-count">{count}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              {topicTagOptions.length > 0 && (
+                <div className="material-tag-filter material-tag-filter-topic" role="group" aria-label="按主题标签筛选">
+                  <span className="material-tag-filter-label">主题</span>
+                  <div className="material-tag-chips">
+                    {topicTagOptions.map(([tag, count]) => {
+                      const active = selectedTags.includes(tag);
+                      return (
+                        <button
+                          key={tag}
+                          type="button"
+                          className={active ? "active" : ""}
+                          aria-pressed={active}
+                          onClick={() =>
+                            setSelectedTags((value) =>
+                              value.includes(tag) ? value.filter((item) => item !== tag) : [...value, tag]
+                            )
+                          }
+                        >
+                          {tag}<span className="material-tag-count">{count}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <div className="search-box">
           <Search size={17} />
@@ -267,148 +285,41 @@ export function TeacherMaterials() {
       </Card>
 
       <div className="material-grid">
-        {materials.map((material) => {
-          const configCount = state.materialRefs.filter(
-            (ref) => ref.materialId === material.id && lessonIds.includes(ref.lessonId)
-          ).length;
-          return (
-            <div className="material-card-wrap" key={material.id}>
-              <MaterialCard
-                material={material}
-                onView={() => setPreviewMaterialId(material.id)}
-                actions={
-                  <Button size="sm" variant="secondary" onClick={() => setConfigMaterialId(material.id)}>
-                    <CalendarPlus size={15} /> 配置到课节{configCount > 0 ? ` (${configCount})` : ""}
-                  </Button>
-                }
-              />
-            </div>
-          );
-        })}
+        {materials.map((material) => (
+          <div className="material-card-wrap" key={material.id}>
+            <MaterialCard material={material} showTags onView={() => setPreviewMaterialId(material.id)} />
+          </div>
+        ))}
         {materials.length === 0 && (
           scopedMaterials.length > 0 ? (
             <EmptyState
               title="没有匹配的材料"
-              description="换个文件类型、阶段或关键词再试。"
-              action={<Button variant="ghost" onClick={() => { setTypeFilter([]); setTab("all"); setQuery(""); }}>清除筛选</Button>}
+              description="换个标签、文件类型或关键词再试。"
+              action={<Button variant="ghost" onClick={() => { setSelectedTags([]); setTypeFilter([]); setQuery(""); }}>清除筛选</Button>}
             />
           ) : (
-            <EmptyState title="暂无材料" description="上传第一批课程材料并关联课节。" action={<Button disabled>上传材料</Button>} />
+            <EmptyState title="暂无材料" description="上传第一批课程材料，之后可在课节设计中引用。" action={<Button onClick={() => setUploadOpen(true)}>上传材料</Button>} />
           )
         )}
       </div>
-      </>
-      )}
-
-      {libraryTab === "templates" && (
-      <>
-        <Card className="content-filter-bar">
-          <TemplateTypeChips
-            templates={state.interactionTemplates}
-            value={templateType}
-            onChange={(next) => { setTemplateType(next); setTemplateVisible(12); }}
-          />
-          <div className="search-box">
-            <Search size={17} />
-            <TextInput
-              value={templateQuery}
-              onChange={(event) => { setTemplateQuery(event.target.value); setTemplateVisible(12); }}
-              placeholder="搜索模板主题，例如“餐厅”“天气”"
-            />
-          </div>
-        </Card>
-
-        <p className="muted-copy">匹配 {templates.length} 套模板</p>
-
-        <div className="template-grid">
-          {templates.slice(0, templateVisible).map((template, index) => {
-            const createButton = (
-              <Button size="sm" variant="secondary" onClick={() => navigate(`/teacher/materials?library=interactions&templateId=${template.id}`)}>
-                <Sparkles size={14} /> 用这个模板新建
-              </Button>
-            );
-            return (
-              <article key={template.id} className="template-card">
-                <div className="template-card-head">
-                  <span className="phase-badge phase-live">{templateTypeLabels[template.type]}</span>
-                  <Badge tone="neutral">{templateLevelLabel(template.level)}</Badge>
-                </div>
-                <strong>{template.title}</strong>
-                <small>{template.summary}</small>
-                <div className="template-tags">
-                  {template.tags.slice(1, 3).map((tag) => <span key={tag}>{tag}</span>)}
-                </div>
-                {index === 0 ? (
-                  <PmNote kind="流程" note="点击后复制模板并打开互动编辑器；保存前不会影响学生看到的内容。">
-                    {createButton}
-                  </PmNote>
-                ) : createButton}
-              </article>
-            );
-          })}
-        </div>
-
-        {templates.length > templateVisible && (
-          <div className="template-more">
-            <Button variant="ghost" onClick={() => setTemplateVisible((value) => value + 12)}>
-              显示更多（还有 {templates.length - templateVisible} 套）
-            </Button>
-          </div>
-        )}
-        {templates.length === 0 && <EmptyState title="没有匹配的模板" description="换个关键词或题型再试。" />}
-      </>
-      )}
 
       <Modal
         open={Boolean(previewMaterial)}
         title={`材料详情 · ${previewMaterial?.title ?? ""}`}
         onClose={() => setPreviewMaterialId(null)}
         width="980px"
-        footer={
-          <div className="modal-footer-split modal-footer-end">
-            <div>
-              {previewUrl && (
-                <Button variant="ghost" onClick={() => window.open(previewUrl, "_blank", "noopener,noreferrer")}>在新窗口打开</Button>
-              )}
-              <Button variant="secondary" onClick={() => { const id = previewMaterial?.id; setPreviewMaterialId(null); if (id) setConfigMaterialId(id); }}>
-                <CalendarPlus size={16} /> 配置到课节
-              </Button>
-              {previewMaterial?.kind === "link" ? (
-                <Button onClick={() => previewUrl && window.open(previewUrl, "_blank", "noopener,noreferrer")}>打开链接</Button>
-              ) : (
-                <Button
-                  onClick={() => {
-                    if (!previewMaterial) return;
-                    run(() => platform.trackDownload(previewMaterial.id), "下载已记录");
-                    if (previewUrl) {
-                      const anchor = document.createElement("a");
-                      anchor.href = previewUrl;
-                      anchor.download = previewVersion?.fileName ?? previewMaterial.title;
-                      anchor.click();
-                    }
-                  }}
-                >
-                  下载
-                </Button>
-              )}
-            </div>
-          </div>
-        }
       >
         <div className="material-detail-grid">
           <span><small>文件类型</small><strong>{(previewMaterial?.fileType ?? "file").toUpperCase()}</strong></span>
           <span><small>文件大小</small><strong>{previewVersion?.sizeLabel ?? "外链"}</strong></span>
         </div>
 
-        {previewRefs.length > 0 && (
-          <div className="material-detail-refs">
-            <small>已配置课节</small>
+        {previewMaterial && previewMaterial.tags.length > 0 && (
+          <div className="material-detail-tags">
+            <small>标签</small>
             <div>
-              {previewRefs.map((ref) => (
-                <span key={ref.id}>
-                  <b>{phaseLabels[ref.phase]}</b>
-                  {state.lessons.find((lesson) => lesson.id === ref.lessonId)?.title ?? "课节"} · {scopeLabel(ref)}
-                </span>
+              {orderMaterialTags(previewMaterial.tags).map((tag) => (
+                <span className={isMaterialUsageTag(tag) ? "is-usage" : ""} key={tag}>{tag}</span>
               ))}
             </div>
           </div>
@@ -433,27 +344,16 @@ export function TeacherMaterials() {
         )}
       </Modal>
 
-      <MaterialLessonConfigModal
-        open={Boolean(configMaterial)}
-        material={configMaterial}
-        state={state}
-        lessons={teacherLessons}
-        teacherId={user.id}
-        onClose={() => setConfigMaterialId(null)}
-      />
-
       <Modal
         open={uploadOpen}
-        title="上传课程材料"
+        title="上传材料"
         onClose={() => setUploadOpen(false)}
         footer={
           <div className="modal-footer-split">
-            <small>刷新后新上传文件只保留元数据</small>
+            <small>标签只用于整理；材料在课节中的使用阶段不受限制</small>
             <div>
               <Button variant="ghost" onClick={() => setUploadOpen(false)}>取消</Button>
-              <PmNote kind="流程" note="点击后创建材料当前版本，并立即关联到所选课节阶段。">
-                <Button onClick={saveUpload}>上传并关联</Button>
-              </PmNote>
+              <Button onClick={saveUpload}>上传材料</Button>
             </div>
           </div>
         }
@@ -465,6 +365,53 @@ export function TeacherMaterials() {
           <Field label="材料说明" className="field-span-2">
             <textarea className="input textarea" value={form.description} onChange={(event) => setForm((value) => ({ ...value, description: event.target.value }))} />
           </Field>
+          <div className="field field-span-2">
+            <label className="field-label" htmlFor="material-tag-input">标签</label>
+            <div className="material-tag-editor">
+              <div className="material-tag-editor-values">
+                {orderMaterialTags(form.tags).map((tag) => (
+                  <span className={`material-tag-editor-chip${isMaterialUsageTag(tag) ? " is-usage" : ""}`} key={tag}>
+                    {tag}
+                    <button type="button" aria-label={`移除标签 ${tag}`} onClick={() => removeFormTag(tag)}>
+                      <X size={11} />
+                    </button>
+                  </span>
+                ))}
+                <input
+                  id="material-tag-input"
+                  className="material-tag-input"
+                  value={tagDraft}
+                  placeholder={form.tags.length ? "继续添加标签" : "输入标签，按回车添加"}
+                  onChange={(event) => setTagDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === "," || event.key === "，") {
+                      event.preventDefault();
+                      addFormTags(tagDraft);
+                    } else if (event.key === "Backspace" && !tagDraft && form.tags.length > 0) {
+                      setForm((current) => ({ ...current, tags: current.tags.slice(0, -1) }));
+                    }
+                  }}
+                />
+              </div>
+              <Button size="sm" variant="soft" disabled={!tagDraft.trim()} onClick={() => addFormTags(tagDraft)}>
+                <Plus size={14} /> 添加
+              </Button>
+            </div>
+            <small className="material-tag-hint">可用逗号分隔多个标签；预习 / 课堂使用 / 复习会固定置顶，一份材料可同时带多个用途。</small>
+            {availableTags.some(([tag]) => !form.tags.includes(tag)) && (
+              <div className="material-tag-suggestions">
+                <small>推荐标签</small>
+                <div>
+                  {availableTags
+                    .filter(([tag]) => !form.tags.includes(tag))
+                    .slice(0, 10)
+                    .map(([tag]) => (
+                      <button type="button" key={tag} onClick={() => addFormTags(tag)}>+ {tag}</button>
+                    ))}
+                </div>
+              </div>
+            )}
+          </div>
           <Field label="文件类型">
             <Select value={form.fileType} onChange={(event) => setForm((value) => ({ ...value, fileType: event.target.value }))}>
               <option value="pdf">PDF</option>
@@ -479,18 +426,6 @@ export function TeacherMaterials() {
               <option value="zh-id">中文 + 印尼语</option>
               <option value="zh-CN">中文</option>
               <option value="id-ID">印尼语</option>
-            </Select>
-          </Field>
-          <Field label="关联课节">
-            <Select value={form.lessonId} onChange={(event) => setForm((value) => ({ ...value, lessonId: event.target.value }))}>
-              {state.lessons.map((lesson) => <option key={lesson.id} value={lesson.id}>{lesson.title}</option>)}
-            </Select>
-          </Field>
-          <Field label="学习阶段">
-            <Select value={form.phase} onChange={(event) => setForm((value) => ({ ...value, phase: event.target.value as Phase }))}>
-              <option value="preview">课前预习</option>
-              <option value="live">课中</option>
-              <option value="review">课后复习</option>
             </Select>
           </Field>
         </div>

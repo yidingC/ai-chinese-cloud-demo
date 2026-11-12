@@ -24,9 +24,13 @@ export interface GradeRangeSelection extends GradeDateRange {
 
 export interface GradeScope {
   studentId?: string;
+  /** 仅统计这些学生；空数组表示搜索没有命中任何学生。 */
+  studentIds?: string[];
   teacherId?: string;
   classId?: string;
   schoolId?: string;
+  /** 单课次视角：只统计该课次内产生的记录，作业和考试不参与。 */
+  sessionId?: string;
 }
 
 export interface GradeRecord {
@@ -45,6 +49,8 @@ export interface GradeRecord {
   sessionId?: string | null;
   teacherId?: string;
   sourceId: string;
+  /** 互动作答时的版本；用于历史成绩按当时内容计算能力维度。 */
+  versionId?: string;
   attempt?: number;
   timeSpentSeconds?: number;
   wrongItemCount?: number;
@@ -193,7 +199,11 @@ function buildSkillRadar(state: PlatformState, records: GradeRecord[]): SkillRad
     }
 
     const set = state.interactionSets.find((item) => item.id === record.sourceId);
-    const version = set ? state.interactionVersions.find((item) => item.id === set.currentVersionId) : undefined;
+    const version = record.versionId
+      ? state.interactionVersions.find((item) => item.id === record.versionId)
+      : set
+        ? state.interactionVersions.find((item) => item.id === set.currentVersionId)
+        : undefined;
     (version?.items ?? []).forEach((item) => addObservation(interactionSkillWeights[item.type], score));
   });
 
@@ -346,6 +356,7 @@ function sessionContext(state: PlatformState, sessionId: string | null | undefin
 function enrollmentMatchesScope(enrollment: ClassEnrollment, scope: GradeScope, state: PlatformState) {
   if (enrollment.status !== "active") return false;
   if (scope.classId && enrollment.classId !== scope.classId) return false;
+  if (scope.studentIds && !scope.studentIds.includes(enrollment.studentId)) return false;
   if (scope.schoolId) {
     const classGroup = state.classes.find((item) => item.id === enrollment.classId);
     if (classGroup?.schoolId !== scope.schoolId) return false;
@@ -393,27 +404,38 @@ function studentCourseLabel(state: PlatformState, records: GradeRecord[]) {
 
 function buildScopeStudentIds(state: PlatformState, scope: GradeScope, records: GradeRecord[]) {
   const ids = new Set<string>();
-  if (scope.studentId) ids.add(scope.studentId);
+  const allowedStudentIds = scope.studentIds ? new Set(scope.studentIds) : null;
+  if (scope.studentId && (!allowedStudentIds || allowedStudentIds.has(scope.studentId))) ids.add(scope.studentId);
   state.students.forEach((profile) => {
     if (scope.studentId && profile.userId !== scope.studentId) return;
+    if (allowedStudentIds && !allowedStudentIds.has(profile.userId)) return;
     const enrollments = state.classEnrollments.filter((item) => item.studentId === profile.userId && enrollmentMatchesScope(item, scope, state));
     const schoolMember = !scope.schoolId || state.schoolMemberships.some(
       (item) => item.schoolId === scope.schoolId && item.userId === profile.userId && item.role === "student" && item.status === "active"
     );
     if (!scope.studentId && enrollments.length && schoolMember) ids.add(profile.userId);
   });
-  records.forEach((record) => ids.add(record.studentId));
+  records.forEach((record) => {
+    if (allowedStudentIds && !allowedStudentIds.has(record.studentId)) return;
+    ids.add(record.studentId);
+  });
   return ids;
 }
 
 function buildInteractionRecords(state: PlatformState, range: GradeDateRange, scope: GradeScope) {
   const { startAt, endAt } = gradeRangeBounds(range);
   const attempts = state.interactionAttempts
-    .filter((attempt) => isInRange(attempt.completedAt, startAt, endAt))
-    .filter((attempt) => state.interactionSets.find((set) => set.id === attempt.setId)?.countsTowardGrade !== false)
+    .filter((attempt) => scope.sessionId
+      ? attempt.sessionId === scope.sessionId
+      : isInRange(attempt.completedAt, startAt, endAt))
+    .filter((attempt) => {
+      if (typeof attempt.countsTowardGrade === "boolean") return attempt.countsTowardGrade;
+      return state.interactionSets.find((set) => set.id === attempt.setId)?.countsTowardGrade !== false;
+    })
     .filter((attempt) => {
       const context = sessionContext(state, attempt.sessionId);
       if (scope.studentId && attempt.studentId !== scope.studentId) return false;
+      if (scope.studentIds && !scope.studentIds.includes(attempt.studentId)) return false;
       if (scope.classId && context.classId !== scope.classId) return false;
       if (scope.schoolId && context.schoolId !== scope.schoolId) return false;
       if (scope.teacherId && (context.teacherId !== scope.teacherId || !context.classId)) return false;
@@ -434,7 +456,7 @@ function buildInteractionRecords(state: PlatformState, range: GradeDateRange, sc
       studentId: attempt.studentId,
       schoolId: context.schoolId,
       category: "interaction",
-      title: set?.title ?? "互动练习",
+      title: attempt.setTitle ?? set?.title ?? "互动练习",
       score: attempt.score,
       normalizedScore: attempt.score,
       status: "completed",
@@ -445,6 +467,7 @@ function buildInteractionRecords(state: PlatformState, range: GradeDateRange, sc
       sessionId: attempt.sessionId,
       teacherId: context.teacherId,
       sourceId: attempt.setId,
+      versionId: attempt.versionId,
       attempt: attempt.attempt,
       timeSpentSeconds: attempt.timeSpentSeconds,
       wrongItemCount: attempt.wrongItemIds.length
@@ -453,6 +476,7 @@ function buildInteractionRecords(state: PlatformState, range: GradeDateRange, sc
 }
 
 function buildAssessmentRecords(state: PlatformState, range: GradeDateRange, scope: GradeScope) {
+  if (scope.sessionId) return [];
   const { startAt, endAt } = gradeRangeBounds(range);
   const records: GradeRecord[] = [];
   state.assessments
@@ -467,6 +491,7 @@ function buildAssessmentRecords(state: PlatformState, range: GradeDateRange, sco
     .forEach((assessment) => {
       assessment.rosterStudentIds.forEach((studentId) => {
         if (scope.studentId && studentId !== scope.studentId) return;
+        if (scope.studentIds && !scope.studentIds.includes(studentId)) return;
         const score = state.assessmentScores.find(
           (item) => item.assessmentId === assessment.id && item.studentId === studentId
         );

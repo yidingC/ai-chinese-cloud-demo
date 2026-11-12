@@ -77,12 +77,12 @@ export function InteractionTemplatePicker({
   return (
     <Modal
       open={open}
-      title={`预制模板库 · 共 ${templates.length} 套`}
+      title={`单题模板库 · 共 ${templates.length} 道`}
       onClose={onClose}
       width="980px"
       footer={
         <div className="modal-footer-split">
-          <span>按题型、主题和难度挑选，引用后可继续修改内容与答案。</span>
+          <span>挑一道题插入当前互动；多道题可以共同组成一轮课堂互动。</span>
           <Button variant="ghost" onClick={onClose}>关闭</Button>
         </div>
       }
@@ -132,7 +132,7 @@ export function InteractionTemplatePicker({
                 ))}
               </div>
               <Button size="sm" variant="secondary" onClick={() => onPick(template)}>
-                <Sparkles size={14} /> 引用模板
+                <Sparkles size={14} /> 插入这道题
               </Button>
             </article>
           ))}

@@ -699,7 +699,7 @@
     ];
 
 
-    // ---- 预制互动模板库：题型 × 主题 × 难度 ----
+    // ---- 单题素材库：题型 × 主题 × 难度 ----
     // 学生端 18 种题型全部入库：14 个主题 × 18 种题型 × 3 个难度。
     // 每个主题除词表外还带一套素材（排序句 / 填空 / 情景 / 对话 / 改错 / 归类 / 看图说话 / 开放问答），
     // 18 种题型都从同一套素材生成，老师换题型时不用重写内容。
@@ -1908,6 +1908,80 @@
         });
       });
     });
+    /* 互动模板库按教学场景组织，每套模板是一整轮 3–5 道题。
+       单题素材库继续保留，供题目编辑器逐题插入。 */
+    const roundTemplateScenarios = [
+      {
+        id: "warmup",
+        label: "破冰热身",
+        phase: "live",
+        minutes: 4,
+        action: "用轻量问答快速聚拢注意力",
+        types: ["poll", "choice", "picture", "open-qa", "dialogue"]
+      },
+      {
+        id: "vocabulary",
+        label: "词汇导入",
+        phase: "preview",
+        minutes: 5,
+        action: "先认词，再做匹配和听辨，建立词汇印象",
+        types: ["match", "memory", "picture-match", "word-build", "listening"]
+      },
+      {
+        id: "sentence",
+        label: "句型操练",
+        phase: "live",
+        minutes: 6,
+        action: "围绕目标句型完成排序、填空和改错",
+        types: ["order", "fill", "correction", "read-aloud", "dialogue"]
+      },
+      {
+        id: "scenario",
+        label: "情景应用",
+        phase: "live",
+        minutes: 7,
+        action: "把词汇和句型放进真实场景中表达",
+        types: ["situation", "dialogue", "picture", "picture-talk", "open-qa"]
+      },
+      {
+        id: "review",
+        label: "复习巩固",
+        phase: "review",
+        minutes: 6,
+        action: "通过归类、回忆和纠错检查掌握情况",
+        types: ["category", "memory", "choice", "correction", "listening"]
+      },
+      {
+        id: "speaking",
+        label: "口语表达",
+        phase: "review",
+        minutes: 5,
+        action: "用跟读、看图说话和开放问答完成口头输出",
+        types: ["read-aloud", "picture-talk", "open-qa", "dialogue", "situation"]
+      }
+    ];
+    const interactionRoundTemplates = [];
+    templateTopics.forEach((topic) => {
+      roundTemplateScenarios.forEach((scenario) => {
+        templateLevels.forEach((level) => {
+          interactionRoundTemplates.push({
+            id: `round-${topic.id}-${scenario.id}-${level.id}`,
+            title: `${topic.label} · ${scenario.label}`,
+            summary: `${level.label}难度 · ${level.size} 道题，${scenario.action}。`,
+            scenarioId: scenario.id,
+            phase: scenario.phase,
+            topic: topic.label,
+            topicId: topic.id,
+            level: level.id,
+            estimatedMinutes: scenario.minutes + Math.max(0, level.size - 3),
+            tags: [scenario.label, topic.label, level.label, topic.emoji],
+            itemTemplateIds: scenario.types
+              .slice(0, level.size)
+              .map((type) => `${topic.id}-${type}-${level.id}`)
+          });
+        });
+      });
+    });
     const interactionSets = [
       {
         id: "set-greetings-preview",
@@ -1960,101 +2034,35 @@
         updatedAt: iso(addDays(now, -2))
       },
       {
-        id: "set-food-picture",
+        id: "set-food-preview-round",
         lessonId: "lesson-food",
-        title: "看图选词",
+        title: "餐厅点餐 · 预习热身",
         phase: "preview",
         status: "published",
-        currentVersionId: "ver-food-picture-1",
+        currentVersionId: "ver-food-preview-round-1",
         order: 1,
         updatedAt: iso(addDays(now, -2)),
         sessionIds: ["series-session-1"]
       },
       {
-        id: "set-food-match",
+        id: "set-food-live-round",
         lessonId: "lesson-food",
-        title: "图词连线",
-        phase: "preview",
-        status: "published",
-        currentVersionId: "ver-food-match-1",
-        order: 2,
-        updatedAt: iso(addDays(now, -2)),
-        sessionIds: ["series-session-1"]
-      },
-      {
-        id: "set-food-fill",
-        lessonId: "lesson-food",
-        title: "补全句子",
-        phase: "preview",
-        status: "published",
-        currentVersionId: "ver-food-fill-1",
-        order: 3,
-        updatedAt: iso(addDays(now, -2)),
-        sessionIds: ["series-session-1"]
-      },
-      {
-        id: "set-food-situation",
-        lessonId: "lesson-food",
-        title: "点餐情景",
+        title: "餐厅点餐 · 课堂演练",
         phase: "live",
         status: "published",
-        currentVersionId: "ver-food-situation-1",
+        currentVersionId: "ver-food-live-round-1",
         order: 1,
         updatedAt: iso(addDays(now, -2)),
         sessionIds: ["series-session-1"]
       },
       {
-        id: "set-food-dialogue",
+        id: "set-food-review-round",
         lessonId: "lesson-food",
-        title: "对话补全",
-        phase: "live",
-        status: "published",
-        currentVersionId: "ver-food-dialogue-1",
-        order: 2,
-        updatedAt: iso(addDays(now, -2)),
-        sessionIds: ["series-session-1"]
-      },
-      {
-        id: "set-food-choice",
-        lessonId: "lesson-food",
-        title: "饮料选择",
-        phase: "live",
-        status: "published",
-        currentVersionId: "ver-food-choice-1",
-        order: 3,
-        updatedAt: iso(addDays(now, -2)),
-        sessionIds: ["series-session-1"]
-      },
-      {
-        id: "set-food-order",
-        lessonId: "lesson-food",
-        title: "句子排序",
+        title: "餐厅点餐 · 复习巩固",
         phase: "review",
         status: "published",
-        currentVersionId: "ver-food-order-1",
+        currentVersionId: "ver-food-review-round-1",
         order: 1,
-        updatedAt: iso(addDays(now, -2)),
-        sessionIds: ["series-session-1"]
-      },
-      {
-        id: "set-food-category",
-        lessonId: "lesson-food",
-        title: "吃的与喝的",
-        phase: "review",
-        status: "published",
-        currentVersionId: "ver-food-category-1",
-        order: 2,
-        updatedAt: iso(addDays(now, -2)),
-        sessionIds: ["series-session-1"]
-      },
-      {
-        id: "set-food-poll",
-        lessonId: "lesson-food",
-        title: "课堂投票",
-        phase: "review",
-        status: "published",
-        currentVersionId: "ver-food-poll-1",
-        order: 3,
         updatedAt: iso(addDays(now, -2)),
         sessionIds: ["series-session-1"]
       },
@@ -2451,13 +2459,13 @@
         ]
       },
       {
-        id: "ver-food-picture-1",
-        setId: "set-food-picture",
+        id: "ver-food-preview-round-1",
+        setId: "set-food-preview-round",
         version: 1,
         status: "published",
         publishedAt: iso(addDays(now, -2)),
         publishedBy: "teacher-lina",
-        publishNote: "餐厅中文系列第 2 课：看图选词。",
+        publishNote: "餐厅中文系列第 2 课：看图、连线、补句组成一轮预习。",
         items: [
           {
             id: "item-food-picture",
@@ -2471,18 +2479,7 @@
               { id: "food-pic-juice", text: "果汁", hint: "guǒzhī", isCorrect: false }
             ],
             explanation: "面条 miàntiáo 是餐厅里很常见的食物。"
-          }
-        ]
-      },
-      {
-        id: "ver-food-match-1",
-        setId: "set-food-match",
-        version: 1,
-        status: "published",
-        publishedAt: iso(addDays(now, -2)),
-        publishedBy: "teacher-lina",
-        publishNote: "餐厅中文系列第 2 课：图词连线。",
-        items: [
+          },
           {
             id: "item-food-match",
             type: "picture-match",
@@ -2494,18 +2491,7 @@
               { id: "food-pm-juice", left: "果汁", right: "果汁", rightPinyin: "guǒzhī", media: { icon: "🥤", image: "", alt: "一杯果汁" } },
               { id: "food-pm-tea", left: "茶", right: "茶", rightPinyin: "chá", media: { icon: "🍵", image: "", alt: "一杯茶" } }
             ]
-          }
-        ]
-      },
-      {
-        id: "ver-food-fill-1",
-        setId: "set-food-fill",
-        version: 1,
-        status: "published",
-        publishedAt: iso(addDays(now, -2)),
-        publishedBy: "teacher-lina",
-        publishNote: "餐厅中文系列第 2 课：补全点餐句。",
-        items: [
+          },
           {
             id: "item-food-fill",
             type: "fill",
@@ -2517,13 +2503,13 @@
         ]
       },
       {
-        id: "ver-food-situation-1",
-        setId: "set-food-situation",
+        id: "ver-food-live-round-1",
+        setId: "set-food-live-round",
         version: 1,
         status: "published",
         publishedAt: iso(addDays(now, -2)),
         publishedBy: "teacher-lina",
-        publishNote: "餐厅中文系列第 2 课：点餐情景选择。",
+        publishNote: "餐厅中文系列第 2 课：情景、对话、饮料选择组成一轮课堂练习。",
         items: [
           {
             id: "item-food-situation",
@@ -2538,18 +2524,7 @@
               { id: "food-sit-bye", text: "再见，面条。", hint: "场景不合适", isCorrect: false }
             ],
             explanation: "先问候，再用「我想吃……」表达点餐需求。"
-          }
-        ]
-      },
-      {
-        id: "ver-food-dialogue-1",
-        setId: "set-food-dialogue",
-        version: 1,
-        status: "published",
-        publishedAt: iso(addDays(now, -2)),
-        publishedBy: "teacher-lina",
-        publishNote: "餐厅中文系列第 2 课：对话补全。",
-        items: [
+          },
           {
             id: "item-food-dialogue",
             type: "dialogue",
@@ -2562,18 +2537,7 @@
               { id: "food-dlg-weather", text: "今天很热。", isCorrect: false }
             ],
             explanation: "对方问想吃什么，直接回答「我想吃 ＋ 食物」。"
-          }
-        ]
-      },
-      {
-        id: "ver-food-choice-1",
-        setId: "set-food-choice",
-        version: 1,
-        status: "published",
-        publishedAt: iso(addDays(now, -2)),
-        publishedBy: "teacher-lina",
-        publishNote: "餐厅中文系列第 2 课：饮料点单选择。",
-        items: [
+          },
           {
             id: "item-food-choice",
             type: "choice",
@@ -2588,13 +2552,13 @@
         ]
       },
       {
-        id: "ver-food-order-1",
-        setId: "set-food-order",
+        id: "ver-food-review-round-1",
+        setId: "set-food-review-round",
         version: 1,
         status: "published",
         publishedAt: iso(addDays(now, -2)),
         publishedBy: "teacher-lina",
-        publishNote: "餐厅中文系列第 2 课：句子排序。",
+        publishNote: "餐厅中文系列第 2 课：排序、分类、投票组成一轮复习。",
         items: [
           {
             id: "item-food-order",
@@ -2607,18 +2571,7 @@
             ],
             correctOrder: ["food-order-hello", "food-order-want", "food-order-noodles"],
             explanation: "自然顺序是：你好，我想吃一碗面条。"
-          }
-        ]
-      },
-      {
-        id: "ver-food-category-1",
-        setId: "set-food-category",
-        version: 1,
-        status: "published",
-        publishedAt: iso(addDays(now, -2)),
-        publishedBy: "teacher-lina",
-        publishNote: "餐厅中文系列第 2 课：吃的喝的分类。",
-        items: [
+          },
           {
             id: "item-food-category",
             type: "category",
@@ -2634,18 +2587,7 @@
               { id: "food-cat-tea", text: "茶", pinyin: "chá", group: "food-cat-drink" }
             ],
             explanation: "米饭和面条是吃的，果汁和茶是喝的。"
-          }
-        ]
-      },
-      {
-        id: "ver-food-poll-1",
-        setId: "set-food-poll",
-        version: 1,
-        status: "published",
-        publishedAt: iso(addDays(now, -2)),
-        publishedBy: "teacher-lina",
-        publishNote: "餐厅中文系列第 2 课：课堂投票。",
-        items: [
+          },
           {
             id: "item-food-poll",
             type: "poll",
@@ -3298,6 +3240,7 @@
         kind: "file",
         fileType: "pdf",
         language: "zh-id",
+        tags: ["预习", "复习", "问候", "词汇", "拼音"],
         ownerId: "teacher-lina",
         status: "published",
         currentVersion: 2,
@@ -3327,6 +3270,7 @@
         kind: "file",
         fileType: "pptx",
         language: "zh-id",
+        tags: ["课堂使用", "问候", "课堂节奏", "投影"],
         ownerId: "teacher-lina",
         status: "published",
         currentVersion: 1,
@@ -3349,6 +3293,7 @@
         kind: "file",
         fileType: "wav",
         language: "zh-id",
+        tags: ["复习", "问候", "跟读", "音频"],
         ownerId: "teacher-berenice",
         status: "published",
         currentVersion: 1,
@@ -3371,6 +3316,7 @@
         kind: "courseware",
         fileType: "html",
         language: "zh-id",
+        tags: ["预习", "课堂使用", "认识新朋友", "词汇", "互动课件"],
         ownerId: "teacher-berenice",
         status: "published",
         currentVersion: 1,
@@ -3393,6 +3339,7 @@
         kind: "courseware",
         fileType: "html",
         language: "zh-id",
+        tags: ["预习", "课堂使用", "时间", "互动课件"],
         ownerId: "teacher-lina",
         status: "published",
         currentVersion: 1,
@@ -3415,6 +3362,7 @@
         kind: "file",
         fileType: "pdf",
         language: "zh-id",
+        tags: ["复习", "时间", "练习单"],
         ownerId: "teacher-lina",
         status: "published",
         currentVersion: 1,
@@ -3437,6 +3385,7 @@
         kind: "file",
         fileType: "wav",
         language: "zh-id",
+        tags: ["预习", "复习", "时间", "跟读", "音频"],
         ownerId: "teacher-lina",
         status: "published",
         currentVersion: 1,
@@ -3459,6 +3408,7 @@
         kind: "link",
         fileType: "video",
         language: "zh-id",
+        tags: ["复习", "初次见面", "情景", "视频"],
         ownerId: "teacher-lina",
         status: "published",
         currentVersion: 1,
@@ -3603,6 +3553,7 @@
       interactionSets,
       interactionVersions,
       interactionTemplates,
+      interactionRoundTemplates,
       interactionAttempts,
       gradePolicies,
       assessments,

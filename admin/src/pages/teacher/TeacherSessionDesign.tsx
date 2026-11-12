@@ -31,22 +31,33 @@ import {
   getCurrentInteractionVersion,
   getLesson,
   getLessonSessions,
+  getSchoolTimeZone,
   getSession,
   getUser,
   scopeLabel,
   sessionMaterials,
   sessionRuntimeStatus,
-  setAppliesToSession
+  setAppliesToSession,
+  setsForSession
 } from "../../lib/domain";
 import { formatDateTime, formatRange, formatTime, timeZoneLabel } from "../../lib/format";
-import type { ClassSession, InteractionItem, InteractionSet, InteractionType, LessonMaterialRef, Material, Phase } from "../../domain/types";
+import type {
+  ClassSession,
+  InteractionItem,
+  InteractionRoundScenario,
+  InteractionSet,
+  InteractionTemplateLevel,
+  LessonMaterialRef,
+  Material,
+  Phase
+} from "../../domain/types";
 import { Avatar, Badge, Button, Card, EmptyState, Field, Modal, ProgressBar, Select, Tabs, TextInput } from "../../components/ui";
 import { InteractionSetEditorModal } from "../../components/InteractionSetEditorModal";
 import { PmNote } from "../../components/PmNote";
-import { SessionRosterModal } from "../../components/SessionRosterModal";
-import { INTERACTION_TYPE_SHORT_LABELS, interactionTypeLabel, interactionTypeShortLabel } from "../../lib/interactionTypes";
-import { orderTemplatesForBrowse, templateLevelLabel } from "../../lib/templateLibrary";
-import { TemplateTypeChips } from "../../components/TemplateTypeChips";
+import { interactionTypeLabel, interactionTypeShortLabel } from "../../lib/interactionTypes";
+import { templateLevelLabel } from "../../lib/templateLibrary";
+import { roundTemplateQuestionTemplates } from "../../lib/roundTemplates";
+import { InteractionRoundTemplateChips } from "../../components/InteractionRoundTemplateChips";
 import { templateToItem } from "../../components/InteractionTemplatePicker";
 
 const PHASES: Array<{ phase: Phase; label: string; short: string; hint: string; open: string }> = [
@@ -220,19 +231,23 @@ function MaterialScopeModal({
   );
 }
 
-export function TeacherSessionDesign() {
+export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | "operator" } = {}) {
   const { sessionId = "" } = useParams();
   const navigate = useNavigate();
   const store = usePlatformStore();
   const { state, run } = store;
   const user = currentUser(state);
+  const operatorView = mode === "operator";
+  const backPath = operatorView ? "/operator/scheduling" : "/teacher/schedule";
+  const backLabel = operatorView ? "返回排课" : "返回课表";
   const session = getSession(state, sessionId);
   const lesson = session ? getLesson(state, session.lessonId) : undefined;
+  const course = lesson ? state.folders.find((folder) => folder.id === lesson.folderId) : undefined;
 
   const [activePhase, setActivePhase] = useState<Phase>(() => {
     if (!session) return "live";
     const applicableSets = state.interactionSets.filter(
-      (set) => set.lessonId === session.lessonId && set.status === "published" && setAppliesToSession(set, session.id)
+      (set) => set.scope !== "library" && set.lessonId === session.lessonId && set.status === "published" && setAppliesToSession(set, session.id)
     );
     if (applicableSets.some((set) => set.phase === "live")) return "live";
     const firstPopulatedPhase = (["preview", "review"] as Phase[]).find((phase) =>
@@ -254,7 +269,8 @@ export function TeacherSessionDesign() {
   const [importPhase, setImportPhase] = useState<Phase | null>(null);
   const [importSelection, setImportSelection] = useState<string[]>([]);
   const [templateQuery, setTemplateQuery] = useState("");
-  const [templateType, setTemplateType] = useState<InteractionType | "all">("all");
+  const [templateScenario, setTemplateScenario] = useState<InteractionRoundScenario | "all">("all");
+  const [templateLevel, setTemplateLevel] = useState<InteractionTemplateLevel | "all">("all");
   const [templateVisible, setTemplateVisible] = useState(12);
   const [scopeMaterial, setScopeMaterial] = useState<Material | null>(null);
   const [removeTarget, setRemoveTarget] = useState<
@@ -264,8 +280,9 @@ export function TeacherSessionDesign() {
     | null
   >(null);
   const [removeScope, setRemoveScope] = useState<"session" | "lesson">("session");
-  const [rosterOpen, setRosterOpen] = useState(false);
   const [designSaved, setDesignSaved] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [libraryQuery, setLibraryQuery] = useState("");
 
   useEffect(() => {
     if (!designSaved) return;
@@ -276,38 +293,52 @@ export function TeacherSessionDesign() {
   const sessionSets = useMemo(
     () =>
       session
-        ? state.interactionSets
-            .filter((set) => set.lessonId === session.lessonId && set.status === "published" && setAppliesToSession(set, session.id))
+        ? setsForSession(state, session)
+            .filter((set) => set.status === "published")
             .sort((a, b) => a.order - b.order)
         : [],
-    [state.interactionSets, session]
+    [state, session]
   );
   const setsByPhase = (phase: Phase) => sessionSets.filter((set) => set.phase === phase);
   const materialsByPhase = (phase: Phase) => (session ? sessionMaterials(state, session, phase) : []);
-  /** 预制互动模板库：题型 × 主题 × 难度，选中后复制成本节课的互动设计。 */
+  /** 互动库母版：全局仓库，不绑定任何课节。 */
+  const librarySets = useMemo(
+    () =>
+      state.interactionSets
+        .filter((set) => set.scope === "library")
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
+    [state.interactionSets]
+  );
+  const filteredLibrarySets = librarySets.filter((set) => {
+    const keyword = libraryQuery.trim().toLowerCase();
+    if (!keyword) return true;
+    return set.title.toLowerCase().includes(keyword) || (set.tags ?? []).join(" ").toLowerCase().includes(keyword);
+  });
+  /** 互动模板库：按教学场景组织的一整轮互动，选中后整轮复制到本节课。 */
   const libraryTemplates = useMemo(() => {
     const keyword = templateQuery.trim().toLowerCase();
-    const matched = state.interactionTemplates.filter((template) => {
-      const typeMatch = templateType === "all" || template.type === templateType;
+    return state.interactionRoundTemplates.filter((template) => {
+      const scenarioMatch = templateScenario === "all" || template.scenarioId === templateScenario;
+      const levelMatch = templateLevel === "all" || template.level === templateLevel;
       const queryMatch =
         !keyword ||
         template.title.toLowerCase().includes(keyword) ||
         template.topic.toLowerCase().includes(keyword) ||
         template.summary.toLowerCase().includes(keyword) ||
         template.tags.join(" ").toLowerCase().includes(keyword);
-      return typeMatch && queryMatch;
+      return scenarioMatch && levelMatch && queryMatch;
     });
-    return orderTemplatesForBrowse(matched, templateType);
-  }, [state.interactionTemplates, templateQuery, templateType]);
+  }, [state.interactionRoundTemplates, templateQuery, templateScenario, templateLevel]);
 
   if (!session || !lesson) {
-    return <EmptyState title="课程不存在" description="请返回课表重新选择。" action={<Button onClick={() => navigate("/teacher/schedule")}>返回课表</Button>} />;
+    return <EmptyState title="课程不存在" description="请返回课表重新选择。" action={<Button onClick={() => navigate(backPath)}>{backLabel}</Button>} />;
   }
 
   const booked = getBookedCount(state, session.id);
   const expected = session.roster?.length ?? booked;
   const teacher = getUser(state, session.teacherId);
-  const sessionDate = sessionDateLabels(session.startAt, state.ui.timeZone, state.ui.language);
+  const displayTimeZone = operatorView ? getSchoolTimeZone(state, session.schoolId) : state.ui.timeZone;
+  const sessionDate = sessionDateLabels(session.startAt, displayTimeZone, state.ui.language);
   const runtimeStatus = sessionRuntimeStatus(session);
   const sessionStatus =
     runtimeStatus === "cancelled"
@@ -317,7 +348,7 @@ export function TeacherSessionDesign() {
         : runtimeStatus === "live"
           ? { key: "live", label: "进行中", tone: "mint" as const }
           : { key: "upcoming", label: "未开始", tone: "blue" as const };
-  const readOnly = runtimeStatus !== "upcoming";
+  const readOnly = operatorView || runtimeStatus !== "upcoming";
   const phaseStat = (phase: Phase) => ({ sets: setsByPhase(phase).length, materials: materialsByPhase(phase).length });
   const currentPhase = PHASES.find((item) => item.phase === activePhase)!;
   const currentSets = setsByPhase(activePhase);
@@ -381,6 +412,16 @@ export function TeacherSessionDesign() {
       "轮次名称已更新"
     );
     if (result.ok) setSelectedRoundId(set.id);
+  }
+
+  /** 显式把课堂副本另存进互动库；不会自动回写，也不覆盖原母版。 */
+  function saveRoundToLibrary(set: InteractionSet) {
+    if (readOnly) return;
+    const version = getCurrentInteractionVersion(state, set);
+    run(
+      () => platform.saveInteractionSetToLibrary({ setId: set.id, versionId: version?.id, actorId: user.id }),
+      "已另存到互动库"
+    );
   }
 
   function moveQuestion(set: InteractionSet, itemId: string, direction: -1 | 1) {
@@ -452,7 +493,8 @@ export function TeacherSessionDesign() {
     setImportPhase(phase);
     setImportSelection([]);
     setTemplateQuery("");
-    setTemplateType("all");
+    setTemplateScenario("all");
+    setTemplateLevel("all");
     setTemplateVisible(12);
   }
 
@@ -463,6 +505,23 @@ export function TeacherSessionDesign() {
     setMaterialScope("session");
     setMaterialQuery("");
     setMaterialView("phase");
+  }
+
+  /** 从互动库复制一份到当前课次；副本可独立改，不影响库里的母版。 */
+  function copyFromLibrary(set: InteractionSet) {
+    if (readOnly) return;
+    const result = run(
+      () =>
+        platform.copyInteractionSetToLesson({
+          setId: set.id,
+          lessonId: session!.lessonId,
+          phase: activePhase,
+          sessionIds: [session!.id],
+          actorId: user.id
+        }),
+      `已把“${set.title}”复制到本节课`
+    );
+    if (result.ok) setLibraryOpen(false);
   }
 
   function confirmMaterials() {
@@ -520,18 +579,20 @@ export function TeacherSessionDesign() {
     setUploadForm({ title: "", fileType: "pptx", fileName: "" });
   }
 
-  /** 把选中的预制模板复制成本节课的互动设计，并只配置到本节课。 */
+  /** 把选中的整轮模板复制成本节课的互动设计，并只配置到本节课。 */
   function confirmImport() {
     if (!importPhase || importSelection.length === 0) return;
     const createdIds: string[] = [];
     importSelection.forEach((templateId) => {
-      const template = state.interactionTemplates.find((item) => item.id === templateId);
+      const template = state.interactionRoundTemplates.find((item) => item.id === templateId);
       if (!template) return;
+      const items = roundTemplateQuestionTemplates(template, state.interactionTemplates).map(templateToItem);
+      if (items.length === 0) return;
       const saved = platform.saveInteractionSet({
         lessonId: session!.lessonId,
         title: template.title,
         phase: importPhase,
-        items: [templateToItem(template)],
+        items,
         actorId: user.id,
         publishNote: `从互动模板库引入（${template.topic}）`
       });
@@ -572,32 +633,35 @@ export function TeacherSessionDesign() {
 
   return (
     <>
-      <Card className="design-hero">
-        <div className="design-hero-topbar">
-          <Button className="design-back-button" variant="ghost" size="sm" onClick={() => navigate("/teacher/schedule")}>
-            <ArrowLeft size={16} /> 返回课表
-          </Button>
-          <span className="design-hero-context">{readOnly ? "课堂详情" : "课堂设计"}</span>
-          {readOnly && <span className="design-readonly-chip">只读</span>}
-        </div>
+      <div className="design-page-backbar">
+        <Button className="design-back-button" variant="secondary" size="sm" onClick={() => navigate(backPath)}>
+          <ArrowLeft size={16} /> {backLabel}
+        </Button>
+      </div>
 
+      <Card className="design-hero">
         <div className="design-hero-body">
           <span className="design-hero-accent" style={{ background: lesson.color }} />
           <div className="design-hero-time">
-            <span className="design-hero-zone">{timeZoneLabel(state.ui.timeZone)}</span>
+            <span className="design-hero-zone">{timeZoneLabel(displayTimeZone)}</span>
             <span className="design-hero-date">
               {sessionDate.date}
               <em>{sessionDate.weekday}</em>
             </span>
-            <strong>{formatRange(session.startAt, session.endAt, state.ui.timeZone, state.ui.language)}</strong>
+            <strong>{formatRange(session.startAt, session.endAt, displayTimeZone, state.ui.language)}</strong>
           </div>
           <div className="design-hero-copy">
-            <div className="design-hero-title">
-              <h2>{lesson.title}</h2>
-              {session.source === "series" && <Badge tone="blue">系列班</Badge>}
+            <div className="design-hero-primary">
+              <div className="design-hero-heading">
+                <div className="design-hero-title">
+                  <h2>{lesson.title}</h2>
+                  {session.source === "series" && <Badge tone="blue">系列班</Badge>}
+                </div>
+                <span className={`design-hero-status is-${sessionStatus.key}`}>{sessionStatus.label}</span>
+              </div>
+              {course && <p className="design-hero-course">{course.name}</p>}
+              <p className="design-hero-class"><GraduationCap size={14} /> {session.className}</p>
             </div>
-            {lesson.subtitle && <p className="design-hero-subtitle">{lesson.subtitle}</p>}
-            <p className="design-hero-class"><GraduationCap size={14} /> {session.className}</p>
             <div className="design-hero-meta">
               {teacher && (
                 <span className="design-hero-teacher">
@@ -608,12 +672,6 @@ export function TeacherSessionDesign() {
               <span><UsersRound size={14} /> 应到 <strong>{expected}</strong> 人</span>
               <span><MapPin size={14} /> {session.roomLabel}</span>
             </div>
-          </div>
-          <div className="design-hero-actions">
-            <span className={`design-hero-status is-${sessionStatus.key}`}>{sessionStatus.label}</span>
-            <Button className="design-hero-roster" variant="secondary" size="sm" onClick={() => setRosterOpen(true)}>
-              <UsersRound size={16} /> 学生名单
-            </Button>
           </div>
         </div>
       </Card>
@@ -722,6 +780,11 @@ export function TeacherSessionDesign() {
                       <Layers3 size={15} /> 新建互动轮次
                     </Button>
                   </PmNote>
+                  <PmNote kind="流程" note="从互动库复制一份到本节课；之后修改副本不会影响库里的母版。">
+                    <Button variant="secondary" size="sm" onClick={() => { setLibraryQuery(""); setLibraryOpen(true); }}>
+                      <LibraryBig size={15} /> 从互动库添加
+                    </Button>
+                  </PmNote>
                   <PmNote kind="流程" note="模板会复制成一个新的轮次，只配置到本节课。">
                     <Button variant="ghost" size="sm" onClick={() => openTemplateLibrary(activePhase)}>
                       <LibraryBig size={15} /> 从模板库选用
@@ -763,6 +826,15 @@ export function TeacherSessionDesign() {
                     </div>
                     {!readOnly && (
                       <div className="design-round-actions">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          aria-label={`另存到互动库 ${set.title}`}
+                          title="另存到互动库"
+                          onClick={() => saveRoundToLibrary(set)}
+                        >
+                          <Save size={14} />
+                        </Button>
                         <Button
                           size="icon"
                           variant="ghost"
@@ -906,8 +978,6 @@ export function TeacherSessionDesign() {
         </Card>
       </div>
 
-      <SessionRosterModal sessionId={rosterOpen ? session.id : null} onClose={() => setRosterOpen(false)} />
-
       <InteractionSetEditorModal
         open={Boolean(editorSeed)}
         set={editorSeed?.set ?? null}
@@ -918,6 +988,54 @@ export function TeacherSessionDesign() {
         pendingSessionIds={editorSeed?.set ? [] : [session.id]}
         onClose={() => setEditorSeed(null)}
       />
+
+      <Modal
+        open={libraryOpen}
+        title={`从互动库添加 · ${currentPhase.label}`}
+        onClose={() => setLibraryOpen(false)}
+        width="880px"
+      >
+        <p className="muted-copy">
+          选择一轮互动，复制一份到本节课。副本可以独立改题，不会影响互动库里的母版。
+        </p>
+        <div className="search-box" style={{ marginBottom: 16 }}>
+          <Search size={17} />
+          <TextInput
+            value={libraryQuery}
+            onChange={(event) => setLibraryQuery(event.target.value)}
+            placeholder="搜索互动名称或标签"
+          />
+        </div>
+        <div className="template-grid">
+          {filteredLibrarySets.map((set) => {
+            const version = getCurrentInteractionVersion(state, set);
+            const items = version?.items ?? [];
+            return (
+              <article key={set.id} className="template-card">
+                <div className="template-card-head">
+                  <span className={`phase-badge phase-${set.phase}`}>
+                    {set.phase === "preview" ? "预习" : set.phase === "live" ? "课中" : "复习"}
+                  </span>
+                  <Badge tone="neutral">{items.length} 道题</Badge>
+                </div>
+                <strong>{set.title}</strong>
+                <small>{(set.tags ?? []).join(" · ") || "互动库内容"}</small>
+                <div className="template-tags">
+                  {[...new Set(items.map((item) => item.type))].slice(0, 3).map((type) => (
+                    <span key={type}>{interactionTypeShortLabel(type)}</span>
+                  ))}
+                </div>
+                <Button size="sm" variant="secondary" onClick={() => copyFromLibrary(set)}>
+                  复制到本节课
+                </Button>
+              </article>
+            );
+          })}
+        </div>
+        {filteredLibrarySets.length === 0 && (
+          <EmptyState title="互动库里还没有内容" description="先到互动库新建一轮，或换个关键词再试。" />
+        )}
+      </Modal>
 
       <Modal
         open={Boolean(removeTarget)}
@@ -952,7 +1070,7 @@ export function TeacherSessionDesign() {
           <p className="muted-copy">这道题会从当前互动轮次中删除，并同步给使用该设计的课次。</p>
         ) : (
           <>
-            <p className="muted-copy">请选择移出范围，移出后内容仍会保留在材料与互动库中。</p>
+            <p className="muted-copy">请选择移出范围，移出后内容仍会保留在材料库或互动库中。</p>
             <div className="remove-scope-grid" role="radiogroup" aria-label="移出范围">
               <button
                 type="button"
@@ -1174,7 +1292,7 @@ export function TeacherSessionDesign() {
         }
       >
         <p className="muted-copy">
-          预制模板共 {state.interactionTemplates.length} 套，按题型 / 主题 / 难度挑选。选中的模板会复制成
+          共 {state.interactionRoundTemplates.length} 轮互动模板，按教学场景、主题和难度挑选。选中的模板会整轮复制成
           {PHASES.find((item) => item.phase === importPhase)?.label ?? "该阶段"}的互动设计，只配置到本节课，模板库本身不受影响。
         </p>
 
@@ -1187,18 +1305,31 @@ export function TeacherSessionDesign() {
               placeholder="搜索模板主题，例如「餐厅」「天气」"
             />
           </div>
-          <span className="design-template-count">匹配 {libraryTemplates.length} 套</span>
+          <Select
+            className="sort-select"
+            value={templateLevel}
+            onChange={(event) => { setTemplateLevel(event.target.value as InteractionTemplateLevel | "all"); setTemplateVisible(12); }}
+            aria-label="模板难度"
+          >
+            <option value="all">全部难度</option>
+            <option value="beginner">初级</option>
+            <option value="intermediate">中级</option>
+            <option value="advanced">高级</option>
+          </Select>
+          <span className="design-template-count">匹配 {libraryTemplates.length} 轮</span>
         </div>
 
-        <TemplateTypeChips
-          templates={state.interactionTemplates}
-          value={templateType}
-          onChange={(next) => { setTemplateType(next); setTemplateVisible(12); }}
+        <InteractionRoundTemplateChips
+          templates={state.interactionRoundTemplates}
+          value={templateScenario}
+          onChange={(next) => { setTemplateScenario(next); setTemplateVisible(12); }}
         />
 
         <div className="assign-session-list design-template-list">
           {libraryTemplates.slice(0, templateVisible).map((template) => {
             const checked = importSelection.includes(template.id);
+            const questionTemplates = roundTemplateQuestionTemplates(template, state.interactionTemplates);
+            const types = [...new Set(questionTemplates.map((item) => item.item.type))];
             return (
               <label key={template.id} className={`assign-session-row ${checked ? "selected" : ""}`}>
                 <input
@@ -1211,20 +1342,21 @@ export function TeacherSessionDesign() {
                   <small>{template.summary}</small>
                 </span>
                 <span className="design-template-tags">
-                  <Badge tone="purple">{INTERACTION_TYPE_SHORT_LABELS[template.type]}</Badge>
+                  <Badge tone="purple">{questionTemplates.length} 道题</Badge>
                   <Badge tone="neutral">{templateLevelLabel(template.level)}</Badge>
                   <Badge tone="blue">{template.topic}</Badge>
+                  <Badge tone="mint">{types.slice(0, 2).map(interactionTypeShortLabel).join(" · ")}</Badge>
                 </span>
               </label>
             );
           })}
-          {libraryTemplates.length === 0 && <p className="muted-copy">没有匹配的模板，换个关键词或题型再试。</p>}
+          {libraryTemplates.length === 0 && <p className="muted-copy">没有匹配的互动模板，换个教学场景、难度或关键词再试。</p>}
         </div>
 
         {libraryTemplates.length > templateVisible && (
           <div className="template-more">
             <Button variant="ghost" size="sm" onClick={() => setTemplateVisible((value) => value + 12)}>
-              显示更多（还有 {libraryTemplates.length - templateVisible} 套）
+              显示更多（还有 {libraryTemplates.length - templateVisible} 轮）
             </Button>
           </div>
         )}

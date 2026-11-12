@@ -39,6 +39,7 @@ const navIcons = {
   results: BarChart3,
   grades: GraduationCap,
   materials: LibraryBig,
+  interactions: Sparkles,
   catalog: FolderTree,
   scheduling: ClipboardList,
   students: Users,
@@ -71,7 +72,8 @@ function navItems(role: Role, t: (key: string) => string): SidebarNavItem[] {
       { to: "/teacher/schedule", key: "schedule", label: t("nav.schedule"), group: "schedule" },
       { to: "/teacher/results", key: "results", label: t("nav.results"), group: "results" },
       { to: "/teacher/grades", key: "grades", label: t("nav.studentGrades"), group: "results" },
-      { to: "/teacher/materials", key: "materials", label: t("nav.materials"), group: "materials" },
+      { to: "/teacher/materials", key: "materials", label: t("nav.materials"), group: "library" },
+      { to: "/teacher/interactions", key: "interactions", label: t("nav.interactions"), group: "library" },
       { to: "/notifications", key: "dashboard", label: t("common.notifications"), group: "notifications" }
     ];
   }
@@ -90,6 +92,8 @@ function navItems(role: Role, t: (key: string) => string): SidebarNavItem[] {
     { to: "/operator/scheduling", key: "scheduling", label: t("nav.scheduling"), group: "scheduling" },
     { to: "/operator/students", key: "students", label: t("nav.students"), group: "people" },
     { to: "/operator/schools", key: "schools", label: t("nav.schools"), group: "people" },
+    { to: "/operator/results", key: "results", label: t("nav.academicResults"), group: "results" },
+    { to: "/operator/grades", key: "grades", label: t("nav.studentGrades"), group: "results" },
     { to: "/operator/catalog", key: "catalog", label: t("nav.catalog"), group: "catalog" }
   ];
 }

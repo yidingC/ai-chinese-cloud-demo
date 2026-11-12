@@ -65,16 +65,18 @@ describe("operator student workspace", () => {
     expect(classSchool).toHaveValue("");
 
     fireEvent.change(classSchool, { target: { value: "school-hope" } });
-    expect(within(dialog).getByRole("combobox", { name: "教师" })).toHaveDisplayValue("Berenice 老师");
+    expect(within(dialog).queryByRole("combobox", { name: "教师" })).not.toBeInTheDocument();
     fireEvent.change(within(dialog).getByRole("textbox", { name: "班级名称" }), { target: { value: "跨校测试班" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "保存班级" }));
 
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "新建班级" })).not.toBeInTheDocument());
     const created = platform.getState().classes.find((item) => item.name === "跨校测试班");
     expect(created?.schoolId).toBe("school-hope");
+    expect(created?.teacherId).toBe("");
     const createdRow = screen.getByText("跨校测试班").closest("article");
     expect(createdRow).not.toBeNull();
     expect(within(createdRow!).getByText("印尼希望学校")).toBeInTheDocument();
+    expect(within(createdRow!).getByText("未分配教师")).toBeInTheDocument();
   });
 
   it("shows only the current class roster and can add another same-school student", async () => {

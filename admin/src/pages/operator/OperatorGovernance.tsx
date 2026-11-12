@@ -14,6 +14,7 @@ export function OperatorGovernance() {
   const { state, run } = usePlatformStore();
   const user = currentUser(state);
   const [tab, setTab] = useState<"interactions" | "materials">("interactions");
+  const lessonInteractionSets = state.interactionSets.filter((set) => set.scope !== "library");
 
   function rollback(set: InteractionSet, versionId: string) {
     const reason = window.prompt("请输入内容回滚原因");
@@ -34,7 +35,7 @@ export function OperatorGovernance() {
           value={tab}
           onChange={setTab}
           items={[
-            { value: "interactions", label: "互动内容", count: state.interactionSets.length },
+            { value: "interactions", label: "互动内容", count: lessonInteractionSets.length },
             { value: "materials", label: "课程材料", count: state.materials.length }
           ]}
         />
@@ -43,7 +44,7 @@ export function OperatorGovernance() {
 
       {tab === "interactions" && (
         <div className="governance-list">
-          {state.interactionSets.map((set) => {
+          {lessonInteractionSets.map((set) => {
             const currentVersion = getCurrentInteractionVersion(state, set);
             const versions = state.interactionVersions.filter((version) => version.setId === set.id).sort((a, b) => b.version - a.version);
             const owner = currentVersion ? getUser(state, currentVersion.publishedBy) : undefined;

@@ -3,13 +3,10 @@ import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   ArrowRight,
-  BarChart3,
-  BookOpenCheck,
   CalendarClock,
   CheckCircle2,
   ChevronRight,
   Clock3,
-  FileText,
   GraduationCap,
   MapPin,
   PlayCircle,
@@ -23,11 +20,10 @@ import {
   getLesson,
   getStudent,
   getUser,
-  lessonContent,
   studentMetrics,
   studentWebTasks
 } from "../../lib/domain";
-import { formatDateTime } from "../../lib/format";
+import { formatDateTime, formatMonthDay, formatTime } from "../../lib/format";
 import { buildGradeAnalytics, defaultGradeRange } from "../../lib/gradeAnalytics";
 import { usePlatformStore } from "../../store/usePlatformStore";
 import { GradeTrendChart } from "../../components/GradeTrendChart";
@@ -48,13 +44,24 @@ export function StudentDashboard() {
   const upcomingSessions = metrics.upcoming.filter(
     (session) => session.status !== "cancelled" && new Date(session.startAt).getTime() > now
   );
-  const pastSessions = metrics.past.filter((session) => session.status !== "cancelled");
   const nextSession = upcomingSessions[0];
-  const recentSession = pastSessions[0];
   const nextLesson = nextSession ? getLesson(state, nextSession.lessonId) : undefined;
-  const recentLesson = recentSession ? getLesson(state, recentSession.lessonId) : undefined;
-  const recentTeacher = recentSession ? getUser(state, recentSession.teacherId) : undefined;
   const nextTeacher = nextSession ? getUser(state, nextSession.teacherId) : undefined;
+  const studentClassIds = new Set([
+    ...metrics.sessions.map((session) => session.classId),
+    ...state.classEnrollments
+      .filter((enrollment) => enrollment.studentId === user.id && enrollment.status === "active")
+      .map((enrollment) => enrollment.classId)
+  ]);
+  const upcomingClassSessions = state.sessions
+    .filter(
+      (session) =>
+        session.status !== "cancelled" &&
+        studentClassIds.has(session.classId) &&
+        new Date(session.startAt).getTime() > now
+    )
+    .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
+    .slice(0, 5);
 
   const [activeTask, setActiveTask] = useState<{ set: InteractionSet; session: ClassSession } | null>(null);
 
@@ -65,16 +72,14 @@ export function StudentDashboard() {
   const pendingTasks = studentWebTasks(state, user.id, now, state.ui.timeZone)
     .flatMap(({ tasks }) => tasks)
     .filter(({ set }) => !metrics.completedSetIds.has(set.id));
-  const previewTaskCount = pendingTasks.filter(({ phase }) => phase === "preview").length;
-  const reviewTaskCount = pendingTasks.filter(({ phase }) => phase === "review").length;
   const nextPreviewTask = pendingTasks.find(
     ({ phase, session }) => phase === "preview" && session.id === nextSession?.id
   );
-
-  const recentReviewContent = recentSession
-    ? lessonContent(state, recentSession.lessonId, "review", recentSession.id)
-    : { sets: [], materials: [] };
-  const recentReviewCount = recentReviewContent.sets.length + recentReviewContent.materials.length;
+  const reminderTasks = pendingTasks.filter(
+    ({ set, session }) => !(nextPreviewTask?.set.id === set.id && nextPreviewTask.session.id === session.id)
+  );
+  const previewTaskCount = reminderTasks.filter(({ phase }) => phase === "preview").length;
+  const reviewTaskCount = reminderTasks.filter(({ phase }) => phase === "review").length;
 
   const gradeSummary = useMemo(() => {
     const analytics = buildGradeAnalytics(state, defaultGradeRange(state.ui.timeZone), { studentId: user.id });
@@ -83,10 +88,6 @@ export function StudentDashboard() {
 
   function openPreview(session: ClassSession) {
     navigate(`/student/lesson/${session.lessonId}?sessionId=${session.id}&phase=preview`);
-  }
-
-  function openReview(session: ClassSession) {
-    navigate(`/student/lesson/${session.lessonId}?sessionId=${session.id}&phase=review`);
   }
 
   return (
@@ -101,14 +102,6 @@ export function StudentDashboard() {
             </span>
           </span>
         ) : t("student.greeting", { name: user.name })}
-        description={t("student.dashboardDescription", { timezone: t("common.timezone"), timeZone: state.ui.timeZone })}
-        actions={
-          <div className="student-home-head-actions">
-            <Badge tone="neutral">
-              <CheckCircle2 size={13} /> {t("student.home.completedShort", { count: pastSessions.length })}
-            </Badge>
-          </div>
-        }
       />
 
       <div className="student-home-main-grid">
@@ -185,9 +178,9 @@ export function StudentDashboard() {
             </div>
           </div>
 
-          {pendingTasks.length > 0 ? (
+          {reminderTasks.length > 0 ? (
             <div className="student-home-task-list">
-              {pendingTasks.slice(0, MAX_HOME_TASKS).map(({ phase, set, session }) => {
+              {reminderTasks.slice(0, MAX_HOME_TASKS).map(({ phase, set, session }) => {
                 const lesson = getLesson(state, session.lessonId);
                 return (
                   <button
@@ -225,49 +218,53 @@ export function StudentDashboard() {
       </div>
 
       <div className="student-home-lower-grid">
-        <Card className="student-home-panel student-home-recent-panel">
+        <Card className="student-home-panel student-home-upcoming-panel">
           <div className="card-heading">
             <div>
-              <span className="eyebrow">{t("student.home.recentEyebrow")}</span>
-              <h2>{t("student.home.recentTitle")}</h2>
+              <span className="eyebrow">{t("student.home.upcomingEyebrow")}</span>
+              <h2>{t("student.home.upcomingTitle")}</h2>
             </div>
-            {recentSession && (
-              <Badge tone="neutral">
-                {formatDateTime(recentSession.startAt, state.ui.timeZone, state.ui.language)}
-              </Badge>
-            )}
+            <Button variant="ghost" size="sm" onClick={() => navigate("/student/schedule")}>
+              {t("student.home.upcomingViewAll")} <ArrowRight size={15} />
+            </Button>
           </div>
 
-          {recentSession ? (
-            <div className="student-home-recent">
-              <div className="student-home-recent-title">
-                <span className="student-home-recent-icon"><BookOpenCheck size={22} /></span>
-                <div>
-                  <strong>{recentSession.title}</strong>
-                  <small>{recentLesson?.subtitle || recentLesson?.title || recentSession.className}</small>
-                </div>
-              </div>
-              <div className="student-home-recent-meta">
-                <span><GraduationCap size={15} /> {recentSession.className}</span>
-                {recentTeacher && <span><UserRound size={15} /> {recentTeacher.name}</span>}
-                <span><FileText size={15} /> {t("student.home.reviewContentCount", { count: recentReviewCount })}</span>
-              </div>
-              <div className="student-home-recent-actions">
-                <Button variant="soft" onClick={() => openReview(recentSession)}>
-                  <RotateCcw size={16} /> {t("student.home.reviewAction")}
-                </Button>
-                <Button
-                  variant="secondary"
-                  onClick={() => navigate(`/student/results?sessionId=${recentSession.id}`)}
-                >
-                  <BarChart3 size={16} /> {t("student.home.performanceAction")}
-                </Button>
-              </div>
+          {upcomingClassSessions.length > 0 ? (
+            <div className="student-home-upcoming-list">
+              {upcomingClassSessions.map((session) => {
+                const lesson = getLesson(state, session.lessonId);
+                const teacher = getUser(state, session.teacherId);
+                return (
+                  <button
+                    key={session.id}
+                    type="button"
+                    className="student-home-upcoming-row"
+                    onClick={() => openPreview(session)}
+                  >
+                    <span className="student-home-upcoming-date">
+                      <strong>{formatMonthDay(session.startAt, state.ui.timeZone, state.ui.language)}</strong>
+                      <small>{formatTime(session.startAt, state.ui.timeZone, state.ui.language)}</small>
+                    </span>
+                    <span className="student-home-upcoming-copy">
+                      <strong>
+                        {lesson?.coverEmoji && <span className="student-home-upcoming-emoji">{lesson.coverEmoji}</span>}
+                        {lesson?.title || session.title}
+                      </strong>
+                      <small>
+                        {session.className}
+                        {teacher ? ` · ${teacher.name}` : ""}
+                        {session.roomLabel ? ` · ${session.roomLabel}` : ""}
+                      </small>
+                    </span>
+                    <ChevronRight className="student-home-upcoming-arrow" size={15} />
+                  </button>
+                );
+              })}
             </div>
           ) : (
             <div className="student-home-empty">
-              <span><BookOpenCheck size={21} /></span>
-              <strong>{t("student.home.recentEmpty")}</strong>
+              <span><CalendarClock size={21} /></span>
+              <strong>{t("student.home.upcomingEmpty")}</strong>
             </div>
           )}
         </Card>

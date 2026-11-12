@@ -133,7 +133,7 @@ export function OperatorStudents({
       <PageHeader
         eyebrow={academic ? "Class & student directory" : "Student operations"}
         title="班级与学生"
-        description={academic ? "先按班级查看本校名单与教师，再进入学生查看完整档案、预约与成绩记录；学校教务只能新增学生，不能修改或删除。" : "以班级为单位维护名单与教师；需要查找个人时切换学生档案。学校决定班级范围和可选教师，历史成绩不会因班级调整而拆分。"}
+        description={academic ? "先按班级查看本校名单与教师，再进入学生查看完整档案、预约与成绩记录；学校教务可以新增班级和学生，不能修改或删除。" : "以班级为单位维护名单与教师；需要查找个人时切换学生档案。学校决定班级范围和可选教师，历史成绩不会因班级调整而拆分。"}
       />
 
       <Card className="student-management-toolbar">
@@ -191,11 +191,9 @@ export function OperatorStudents({
               disabled={!schoolId}
             />
           </div>
-          {academic
-            ? <Button disabled={!schoolId || academicClasses.length === 0} onClick={openCreateStudent}><UserRoundPlus size={17} /> 新建学生</Button>
-            : tab === "students"
-            ? <Button disabled={!schoolId} onClick={openCreateStudent}><UserRoundPlus size={17} /> 新建学生</Button>
-            : <Button disabled={!schoolId} onClick={() => setClassEditor("new")}><Plus size={17} /> 新建班级</Button>}
+          {tab === "classes"
+            ? <Button disabled={!schoolId} onClick={() => setClassEditor("new")}><Plus size={17} /> 新建班级</Button>
+            : <Button disabled={!schoolId || (academic && academicClasses.length === 0)} onClick={openCreateStudent}><UserRoundPlus size={17} /> 新建学生</Button>}
         </div>
       </Card>
 
@@ -290,7 +288,7 @@ export function OperatorStudents({
         </div>
       </Modal>
 
-      {!academic && <ClassEditorModal classItem={classEditor} onClose={() => setClassEditor(null)} academic={academic} schoolId={schoolId} />}
+      <ClassEditorModal classItem={classEditor} onClose={() => setClassEditor(null)} academic={academic} schoolId={schoolId} />
       {memberClass && <ClassMembersModal classId={memberClass.id} onClose={() => setMemberClass(null)} schoolId={memberClass.schoolId || (isAllSchools ? "" : schoolId)} readOnly={academic} />}
     </>
   );
@@ -400,12 +398,9 @@ function ClassEditorModal({
   useEffect(() => {
     if (!classItem) return;
     const nextSchoolId = classItem === "new" ? pageSchoolId : classItem.schoolId || pageSchoolId;
-    const nextTeachers = nextSchoolId
-      ? workspaceState(rawState, nextSchoolId).users.filter((item) => item.role === "teacher")
-      : [];
     setName(classItem === "new" ? "" : classItem.name);
     setFormSchoolId(nextSchoolId);
-    setTeacherId(classItem === "new" ? nextTeachers[0]?.id ?? "" : classItem.teacherId);
+    setTeacherId(classItem === "new" ? "" : classItem.teacherId);
     setConfirmDelete(false);
     // 只在打开或切换班级时重置。
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -421,16 +416,13 @@ function ClassEditorModal({
   );
   function changeSchool(nextSchoolId: string) {
     setFormSchoolId(nextSchoolId);
-    const nextTeachers = nextSchoolId
-      ? workspaceState(rawState, nextSchoolId).users.filter((item) => item.role === "teacher")
-      : [];
-    setTeacherId(nextTeachers[0]?.id ?? "");
+    setTeacherId("");
   }
   function save() {
     if (currentClass === "new") {
       if (!effectiveSchoolId) return;
       const result = run(
-        () => platform.createClass({ name, teacherId, schoolId: effectiveSchoolId, actorId: actor.id }),
+        () => platform.createClass({ name, schoolId: effectiveSchoolId, actorId: actor.id }),
         "班级已创建"
       );
       if (result.ok) onClose();
@@ -487,11 +479,11 @@ function ClassEditorModal({
         open
         title={classItem === "new" ? "新建班级" : "编辑班级"}
         onClose={onClose}
-        footer={<div className="modal-footer-split">{lifecycleAction}<div><Button variant="ghost" onClick={onClose}>取消</Button><Button disabled={!name.trim() || !teacherId || !effectiveSchoolId} onClick={save}>保存班级</Button></div></div>}
+        footer={<div className="modal-footer-split">{lifecycleAction}<div><Button variant="ghost" onClick={onClose}>取消</Button><Button disabled={!name.trim() || (currentClass !== "new" && !teacherId) || !effectiveSchoolId} onClick={save}>保存班级</Button></div></div>}
       >
         <div className="editor-grid">
           <Field label="班级名称" className="field-span-2"><TextInput value={name} onChange={(event) => setName(event.target.value)} placeholder={currentSchool ? `例如：${currentSchool.name}7年级A班` : "例如：印尼圣心学校7年级A班"} /></Field>
-          <Field label="所属学校">
+          <Field label="所属学校" className={currentClass === "new" ? "field-span-2" : ""}>
             {canChooseSchool ? (
               <Select aria-label="所属学校" value={formSchoolId} onChange={(event) => changeSchool(event.target.value)}>
                 <option value="">请选择学校</option>
@@ -501,12 +493,14 @@ function ClassEditorModal({
               <TextInput value={currentSchool?.name ?? "未选择学校"} readOnly />
             )}
           </Field>
-          <Field label="教师">
-            <Select disabled={!effectiveSchoolId} value={teacherId} onChange={(event) => setTeacherId(event.target.value)}>
-              {(!effectiveSchoolId || teachers.length === 0) && <option value="">{effectiveSchoolId ? "该校暂无可选教师" : "请先选择学校"}</option>}
-              {teachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name}</option>)}
-            </Select>
-          </Field>
+          {currentClass !== "new" && (
+            <Field label="教师">
+              <Select disabled={!effectiveSchoolId} value={teacherId} onChange={(event) => setTeacherId(event.target.value)}>
+                {(!effectiveSchoolId || teachers.length === 0) && <option value="">{effectiveSchoolId ? "该校暂无可选教师" : "请先选择学校"}</option>}
+                {teachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name}</option>)}
+              </Select>
+            </Field>
+          )}
         </div>
       </Modal>
       <Modal

@@ -5,6 +5,7 @@
   const LEGACY_KEY = "ai-chinese-cloud-classroom-demo-v1";
   const CHANGE_EVENT = "aicloud:store-changed";
   const seedFactory = global.AICloudSeedData;
+  const MATERIAL_USAGE_TAG_NAMES = new Set(["预习", "课堂使用", "复习"]);
 
   if (!seedFactory) {
     throw new Error("AICloudSeedData must be loaded before AICloudPlatformStore");
@@ -27,6 +28,11 @@
       return `${prefix}-${global.crypto.randomUUID()}`;
     }
     return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  function cleanTags(tags) {
+    if (!Array.isArray(tags)) return [];
+    return [...new Set(tags.map((tag) => String(tag).trim()).filter(Boolean))];
   }
 
   function result(ok, data, error, code) {
@@ -78,6 +84,7 @@
       "interactionSets",
       "interactionVersions",
       "interactionTemplates",
+      "interactionRoundTemplates",
       "interactionAttempts",
       "gradePolicies",
       "assessments",
@@ -133,6 +140,17 @@
       lesson.order = Number(lesson.order) || nextOrder;
       lesson.status = "published";
       lessonSequence.set(lesson.folderId, Math.max(nextOrder, lesson.order));
+    });
+
+    // 材料标签是后加的快照字段：老数据保留自己的标签，同时合并内置材料新增的用途标签。
+    const seededMaterialById = new Map((seeded.materials || []).map((material) => [material.id, material]));
+    merged.materials.forEach((material) => {
+      const seedTags = seededMaterialById.get(material.id)?.tags;
+      const currentTags = cleanTags(material.tags);
+      const seedSupplement = currentTags.length
+        ? (seedTags || []).filter((tag) => MATERIAL_USAGE_TAG_NAMES.has(tag))
+        : seedTags;
+      material.tags = cleanTags([...currentTags, ...(seedSupplement || [])]);
     });
 
     const seededSchoolById = new Map((seeded.schools || []).map((school) => [school.id, school]));
@@ -214,22 +232,20 @@
         (template) => !seededTemplateIds.has(template.id) && !retiredTemplateIdPattern.test(template.id)
       )
     ];
+    const seededRoundTemplateIds = new Set((seeded.interactionRoundTemplates || []).map((template) => template.id));
+    merged.interactionRoundTemplates = [
+      ...(seeded.interactionRoundTemplates || []).map((template) => clone(template)),
+      ...merged.interactionRoundTemplates.filter((template) => !seededRoundTemplateIds.has(template.id))
+    ];
     // 互动集的「给学生的说明」字段已下线，老快照里残留的顺手清掉。
     merged.interactionSets.forEach((set) => {
       delete set.description;
     });
-    // 旧版把一道题拆成多题一组，这里按“一个互动一道题”替换成单题互动。
-    const retiredInteractionSetIds = ["set-food-preview", "set-food-live", "set-food-review"];
-    merged.interactionSets = merged.interactionSets.filter((set) => !retiredInteractionSetIds.includes(set.id));
-    merged.interactionVersions = merged.interactionVersions.filter((version) => !retiredInteractionSetIds.includes(version.setId));
-    const demoInteractionSetIds = [
-      "set-friends-preview",
-      "set-friends-live-hello",
-      "set-friends-live-match",
-      "set-friends-live-intro",
-      "set-greetings-review-voice",
-      "set-greetings-scenario",
-      "set-greetings-batch-three",
+    // 餐厅中文的演示数据统一为一轮多题；旧的分阶段合并集和按题拆分的单题集都下线。
+    const retiredInteractionSetIds = new Set([
+      "set-food-preview",
+      "set-food-live",
+      "set-food-review",
       "set-food-picture",
       "set-food-match",
       "set-food-fill",
@@ -239,6 +255,20 @@
       "set-food-order",
       "set-food-category",
       "set-food-poll"
+    ]);
+    merged.interactionSets = merged.interactionSets.filter((set) => !retiredInteractionSetIds.has(set.id));
+    merged.interactionVersions = merged.interactionVersions.filter((version) => !retiredInteractionSetIds.has(version.setId));
+    const demoInteractionSetIds = [
+      "set-friends-preview",
+      "set-friends-live-hello",
+      "set-friends-live-match",
+      "set-friends-live-intro",
+      "set-greetings-review-voice",
+      "set-greetings-scenario",
+      "set-greetings-batch-three",
+      "set-food-preview-round",
+      "set-food-live-round",
+      "set-food-review-round"
     ];
     demoInteractionSetIds.forEach((setId) => {
       const demoSet = (seeded.interactionSets || []).find((set) => set.id === setId);
@@ -254,6 +284,69 @@
           }
         });
     });
+
+    /* 互动库母版迁移：
+       旧快照里的互动都绑定某个课节，属于“课节副本”；
+       这里按 id 幂等补出对应的互动库母版，并给副本记录来源，便于追溯。
+       母版只作为可复制的内容仓库，不参与任何课次。 */
+    merged.interactionSets.forEach((set) => {
+      if (set.scope !== "library") set.scope = "lesson";
+      if (!Array.isArray(set.tags)) set.tags = [];
+      if (!set.origin) set.origin = "legacy";
+    });
+    merged.interactionSets
+      .filter((set) =>
+        set.origin === "legacy" &&
+        set.scope === "lesson" &&
+        !merged.interactionSets.some((item) => item.id === set.sourceSetId)
+      )
+      .forEach((set) => {
+        const libraryId = `${set.id}-library`;
+        let library = merged.interactionSets.find((item) => item.id === libraryId);
+        const versions = merged.interactionVersions.filter((version) => version.setId === set.id);
+        const sourceLesson = merged.lessons.find((lesson) => lesson.id === set.lessonId);
+        if (!library) {
+          library = {
+            ...clone(set),
+            id: libraryId,
+            lessonId: "",
+            scope: "library",
+            origin: "library",
+            sourceSetId: undefined,
+            sourceVersionId: undefined,
+            currentVersionId: "",
+            tags: cleanTags([...(set.tags || []), sourceLesson?.title]),
+            order: merged.interactionSets.filter((item) => item.scope === "library").length + 1
+          };
+          delete library.sessionIds;
+          delete library.excludedSessionIds;
+          merged.interactionSets.push(library);
+        } else if (!(library.tags || []).length && sourceLesson?.title) {
+          library.tags = [sourceLesson.title];
+        }
+        versions.forEach((version) => {
+          const libraryVersionId = `${version.id}-library`;
+          if (!merged.interactionVersions.some((item) => item.id === libraryVersionId)) {
+            merged.interactionVersions.push({ ...clone(version), id: libraryVersionId, setId: libraryId });
+          }
+        });
+        const currentVersion = versions.find((version) => version.id === set.currentVersionId) ||
+          [...versions].sort((a, b) => b.version - a.version)[0];
+        if (currentVersion) {
+          library.currentVersionId = `${currentVersion.id}-library`;
+          set.sourceSetId = libraryId;
+          set.sourceVersionId = `${currentVersion.id}-library`;
+        }
+      });
+    // 已迁移过的老快照：给还没有标签的库母版补齐来源课节名。
+    merged.interactionSets
+      .filter((set) => set.scope === "library" && !(set.tags || []).length)
+      .forEach((library) => {
+        const copy = merged.interactionSets.find((set) => set.sourceSetId === library.id) ||
+          merged.interactionSets.find((set) => set.id === library.id.replace(/-library$/, ""));
+        const lesson = copy ? merged.lessons.find((item) => item.id === copy.lessonId) : undefined;
+        if (lesson?.title) library.tags = [lesson.title];
+      });
 
     // 「餐厅中文」系列改成多课节后，点餐互动从旧的第 2 课次迁到新的第 1 课次。
     merged.interactionSets.forEach((set) => {
@@ -756,6 +849,14 @@
         merged.materialRefs.push(clone(ref));
       }
     });
+    /* 老课次补快照：已开始 / 已结束但还没有快照的，按当前内容补一份，
+       避免这次升级之前的课堂在后续编辑课节时被改到历史。 */
+    merged.sessions.forEach((session) => {
+      if ((session.liveStartedAt || session.liveEndedAt) && !session.contentSnapshot) {
+        session.contentSnapshot = buildSessionContentSnapshot(merged, session);
+      }
+    });
+
     return merged;
   }
 
@@ -1833,12 +1934,59 @@
     }, "session");
   }
 
+  function contentScopeApplies(scope, sessionId) {
+    if ((scope.excludedSessionIds || []).includes(sessionId)) return false;
+    if (!scope.sessionIds) return true;
+    return scope.sessionIds.includes(sessionId);
+  }
+
+  /** 开始上课时冻结这一课次实际用到的课件版本与互动版本。 */
+  function buildSessionContentSnapshot(draft, session) {
+    const interactions = draft.interactionSets
+      .filter((set) =>
+        set.scope !== "library" &&
+        set.lessonId === session.lessonId &&
+        set.status === "published" &&
+        contentScopeApplies(set, session.id)
+      )
+      .map((set) => {
+        const versions = draft.interactionVersions.filter((version) => version.setId === set.id);
+        const version = versions.find((item) => item.id === set.currentVersionId) ||
+          [...versions].sort((a, b) => b.version - a.version)[0];
+        return version
+          ? {
+              setId: set.id,
+              versionId: version.id,
+              phase: set.phase,
+              title: set.title,
+              countsTowardGrade: set.countsTowardGrade !== false
+            }
+          : null;
+      })
+      .filter(Boolean);
+    const materials = draft.materialRefs
+      .filter((ref) =>
+        ref.lessonId === session.lessonId &&
+        ref.published &&
+        contentScopeApplies(ref, session.id)
+      )
+      .map((ref) => {
+        const material = draft.materials.find((item) => item.id === ref.materialId);
+        return material && material.status === "published"
+          ? { materialId: material.id, version: material.currentVersion, phase: ref.phase }
+          : null;
+      })
+      .filter(Boolean);
+    return { capturedAt: nowIso(), interactions, materials };
+  }
+
   function startSession({ sessionId, actorId }) {
     return save((draft) => {
       const session = getSession(draft, sessionId);
       if (!session) return result(false, null, "课次不存在", "NOT_FOUND");
       if (session.status === "cancelled") return result(false, null, "已取消的课次不能开始", "INVALID_STATE");
       if (!session.liveStartedAt) session.liveStartedAt = nowIso();
+      if (!session.contentSnapshot) session.contentSnapshot = buildSessionContentSnapshot(draft, session);
       delete session.liveEndedAt;
       addAudit(draft, {
         actorId: actorId || draft.currentUserId,
@@ -1857,6 +2005,7 @@
       if (!session) return result(false, null, "课次不存在", "NOT_FOUND");
       if (session.status === "cancelled") return result(false, null, "已取消的课次不能结束", "INVALID_STATE");
       if (!session.liveStartedAt) session.liveStartedAt = nowIso();
+      if (!session.contentSnapshot) session.contentSnapshot = buildSessionContentSnapshot(draft, session);
       session.liveEndedAt = nowIso();
       addAudit(draft, {
         actorId: actorId || draft.currentUserId,
@@ -2077,20 +2226,28 @@
     }, "session");
   }
 
-  function saveInteractionSet({ setId = "", lessonId, title, phase, items, countsTowardGrade, actorId, publishNote = "" }) {
+  function saveInteractionSet({ setId = "", lessonId = "", title, phase, items, countsTowardGrade, scope, tags, actorId, publishNote = "" }) {
     return save((draft) => {
       let set = setId ? draft.interactionSets.find((item) => item.id === setId) : null;
+      const nextScope = set
+        ? (set.scope === "library" ? "library" : "lesson")
+        : (scope === "library" ? "library" : "lesson");
       if (!set) {
         set = {
           id: makeId("set"),
-          lessonId,
+          lessonId: nextScope === "library" ? "" : lessonId,
           title,
           phase,
           status: "published",
           currentVersionId: "",
-          order: draft.interactionSets.filter((item) => item.lessonId === lessonId && item.phase === phase).length + 1,
+          order: nextScope === "library"
+            ? draft.interactionSets.filter((item) => item.scope === "library").length + 1
+            : draft.interactionSets.filter((item) => item.scope !== "library" && item.lessonId === lessonId && item.phase === phase).length + 1,
           updatedAt: nowIso(),
-          countsTowardGrade: true
+          countsTowardGrade: true,
+          scope: nextScope,
+          origin: nextScope === "library" ? "library" : "manual",
+          tags: cleanTags(tags)
         };
         draft.interactionSets.push(set);
       }
@@ -2111,12 +2268,13 @@
       };
       draft.interactionVersions.push(version);
       Object.assign(set, {
-        lessonId,
+        lessonId: nextScope === "library" ? "" : lessonId,
         title,
         phase,
         status: "published",
         currentVersionId: version.id,
         updatedAt: nowIso(),
+        ...(Array.isArray(tags) ? { tags: cleanTags(tags) } : {}),
         ...(typeof countsTowardGrade === "boolean" ? { countsTowardGrade } : {})
       });
       addAudit(draft, {
@@ -2131,10 +2289,144 @@
     }, "interaction");
   }
 
+  /** 只更新互动壳层属性；不改题目内容，也不生成新的内容版本。 */
+  function updateInteractionSetMeta({ setId, title, phase, tags, countsTowardGrade, actorId }) {
+    return save((draft) => {
+      const set = draft.interactionSets.find((item) => item.id === setId);
+      if (!set) return result(false, null, "互动不存在", "NOT_FOUND");
+      const nextTitle = String(title ?? set.title).trim();
+      if (!nextTitle) return result(false, null, "互动标题不能为空", "INVALID_INPUT");
+      Object.assign(set, {
+        title: nextTitle,
+        phase: phase || set.phase,
+        updatedAt: nowIso(),
+        ...(Array.isArray(tags) ? { tags: cleanTags(tags) } : {}),
+        ...(typeof countsTowardGrade === "boolean" ? { countsTowardGrade } : {})
+      });
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: "update_interaction_meta",
+        targetType: "interaction_set",
+        targetId: set.id,
+        summary: `更新互动设置“${set.title}”`,
+        reason: "修改互动标题、阶段、标签或成绩设置"
+      });
+      return result(true, { set });
+    }, "interaction");
+  }
+
+  /** 从互动库复制一份独立副本到课节；之后两边各改各的，互不影响。 */
+  function copyInteractionSetToLesson({ setId, lessonId, phase, sessionIds = [], actorId }) {
+    return save((draft) => {
+      const source = draft.interactionSets.find((item) => item.id === setId);
+      if (!source) return result(false, null, "互动不存在", "NOT_FOUND");
+      const lesson = draft.lessons.find((item) => item.id === lessonId);
+      if (!lesson) return result(false, null, "课节不存在", "NOT_FOUND");
+      const sourceVersions = draft.interactionVersions.filter((version) => version.setId === source.id);
+      const sourceVersion = sourceVersions.find((version) => version.id === source.currentVersionId) ||
+        [...sourceVersions].sort((a, b) => b.version - a.version)[0];
+      if (!sourceVersion) return result(false, null, "互动还没有可复制的内容", "INVALID_STATE");
+      const nextPhase = phase || source.phase;
+      const validSessionIds = [...new Set(sessionIds)].filter((id) => draft.sessions.some((session) => session.id === id));
+      const set = {
+        id: makeId("set"),
+        lessonId,
+        title: source.title,
+        phase: nextPhase,
+        status: "published",
+        currentVersionId: "",
+        order: draft.interactionSets.filter(
+          (item) => item.scope !== "library" && item.lessonId === lessonId && item.phase === nextPhase
+        ).length + 1,
+        updatedAt: nowIso(),
+        countsTowardGrade: source.countsTowardGrade !== false,
+        scope: "lesson",
+        origin: "copied",
+        sourceSetId: source.id,
+        sourceVersionId: sourceVersion.id,
+        tags: clone(source.tags || [])
+      };
+      if (validSessionIds.length) set.sessionIds = validSessionIds;
+      const version = {
+        id: makeId("ver"),
+        setId: set.id,
+        version: 1,
+        status: "published",
+        publishedAt: nowIso(),
+        publishedBy: actorId || draft.currentUserId,
+        publishNote: `从互动库复制：${source.title}`,
+        items: clone(sourceVersion.items || [])
+      };
+      set.currentVersionId = version.id;
+      draft.interactionSets.push(set);
+      draft.interactionVersions.push(version);
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: "copy_interaction",
+        targetType: "interaction_set",
+        targetId: set.id,
+        summary: `把“${source.title}”复制到课节“${lesson.title}”`,
+        reason: validSessionIds.length ? `指定 ${validSessionIds.length} 节课次` : "课节全部课次"
+      });
+      return result(true, { set, version, source });
+    }, "interaction");
+  }
+
+  /** 把课节副本显式另存回互动库；不会自动发生，也不会覆盖原母版。 */
+  function saveInteractionSetToLibrary({ setId, versionId, actorId }) {
+    return save((draft) => {
+      const source = draft.interactionSets.find((item) => item.id === setId);
+      if (!source) return result(false, null, "互动不存在", "NOT_FOUND");
+      const versions = draft.interactionVersions.filter((version) => version.setId === source.id);
+      const sourceVersion = versions.find((version) => version.id === (versionId || source.currentVersionId)) ||
+        [...versions].sort((a, b) => b.version - a.version)[0];
+      if (!sourceVersion) return result(false, null, "互动还没有可保存的内容", "INVALID_STATE");
+      const set = {
+        id: makeId("set"),
+        lessonId: "",
+        title: source.title,
+        phase: source.phase,
+        status: "published",
+        currentVersionId: "",
+        order: draft.interactionSets.filter((item) => item.scope === "library").length + 1,
+        updatedAt: nowIso(),
+        countsTowardGrade: source.countsTowardGrade !== false,
+        scope: "library",
+        origin: "library",
+        tags: cleanTags([
+          ...(source.tags || []),
+          draft.lessons.find((lesson) => lesson.id === source.lessonId)?.title
+        ])
+      };
+      const version = {
+        id: makeId("ver"),
+        setId: set.id,
+        version: 1,
+        status: "published",
+        publishedAt: nowIso(),
+        publishedBy: actorId || draft.currentUserId,
+        publishNote: `从课节副本另存：${source.title}`,
+        items: clone(sourceVersion.items || [])
+      };
+      set.currentVersionId = version.id;
+      draft.interactionSets.push(set);
+      draft.interactionVersions.push(version);
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: "save_interaction_to_library",
+        targetType: "interaction_set",
+        targetId: set.id,
+        summary: `把“${source.title}”另存到互动库`
+      });
+      return result(true, { set, version, source });
+    }, "interaction");
+  }
+
   function assignInteractionSessions({ setId, sessionIds = [], actorId }) {
     return save((draft) => {
       const set = draft.interactionSets.find((item) => item.id === setId);
       if (!set) return result(false, null, "互动不存在", "NOT_FOUND");
+      if (set.scope === "library") return result(false, null, "互动库内容需要先复制到课节", "INVALID_STATE");
       const ids = [...new Set(sessionIds)];
       const invalid = ids.filter((id) => !draft.sessions.some((session) => session.id === id));
       if (invalid.length) return result(false, null, "课次不存在", "NOT_FOUND");
@@ -2165,6 +2457,7 @@
     return save((draft) => {
       const set = draft.interactionSets.find((item) => item.id === setId);
       if (!set) return result(false, null, "互动不存在", "NOT_FOUND");
+      if (set.scope === "library") return result(false, null, "互动库内容不属于课节", "INVALID_STATE");
       set.sessionIds = [];
       delete set.excludedSessionIds;
       set.updatedAt = nowIso();
@@ -2184,6 +2477,7 @@
     return save((draft) => {
       const set = draft.interactionSets.find((item) => item.id === setId);
       if (!set) return result(false, null, "互动不存在", "NOT_FOUND");
+      if (set.scope === "library") return result(false, null, "互动库内容不属于课节", "INVALID_STATE");
       if (excluded) {
         if (set.sessionIds) {
           set.sessionIds = set.sessionIds.filter((id) => id !== sessionId);
@@ -2712,7 +3006,7 @@
     }, "student");
   }
 
-  function addMockMaterial({ title, description, fileType = "pdf", language = "zh-id", ownerId, phase = "preview", lessonId, fileName = "uploaded-demo.pdf", sizeLabel = "32 KB" }) {
+  function addMockMaterial({ title, description, fileType = "pdf", language = "zh-id", tags = [], ownerId, phase = "preview", lessonId, fileName = "uploaded-demo.pdf", sizeLabel = "32 KB" }) {
     return save((draft) => {
       const material = {
         id: makeId("material"),
@@ -2721,6 +3015,7 @@
         kind: "file",
         fileType,
         language,
+        tags: cleanTags(tags),
         ownerId,
         status: "published",
         currentVersion: 1,
@@ -2907,11 +3202,11 @@
   function createClass({ name, teacherId, status = "active", schoolId, actorId }) {
     return save((draft) => {
       const className = String(name || "").trim();
-      const teacher = getUser(draft, teacherId);
+      const teacher = teacherId ? getUser(draft, teacherId) : null;
       const actor = getUser(draft, actorId || draft.currentUserId);
       const resolvedSchoolId = schoolId || (actor?.role === "academic" ? activeAcademicSchoolId(draft, actor.id) : "school-demo");
       if (!className) return result(false, null, "请填写班级名称", "NAME_REQUIRED");
-      if (!teacher || teacher.role !== "teacher") return result(false, null, "授课教师不存在", "TEACHER_NOT_FOUND");
+      if (teacherId && (!teacher || teacher.role !== "teacher")) return result(false, null, "授课教师不存在", "TEACHER_NOT_FOUND");
       if (draft.classes.some((item) => item.name === className && item.schoolId === resolvedSchoolId)) {
         return result(false, null, "本校内已存在同名班级", "CLASS_EXISTS");
       }
@@ -2919,12 +3214,12 @@
         id: makeId("class"),
         schoolId: resolvedSchoolId,
         name: className,
-        teacherId,
+        teacherId: teacher?.id || "",
         status,
         createdAt: nowIso()
       };
       draft.classes.push(classGroup);
-      ensureSchoolMembership(draft, resolvedSchoolId, teacherId, "teacher");
+      if (teacher) ensureSchoolMembership(draft, resolvedSchoolId, teacher.id, "teacher");
       addAudit(draft, {
         actorId: actorId || draft.currentUserId,
         action: "create_class",
@@ -3246,12 +3541,14 @@
     return save((draft) => {
       const set = draft.interactionSets.find((item) => item.id === setId);
       if (!set) return result(false, null, "互动不存在", "NOT_FOUND");
+      const session = sessionId ? draft.sessions.find((item) => item.id === sessionId) : undefined;
+      const snapshotEntry = session?.contentSnapshot?.interactions.find((entry) => entry.setId === setId);
       const previous = draft.interactionAttempts.filter((attempt) => attempt.setId === setId && attempt.studentId === studentId);
       const bestPrevious = previous.reduce((max, attempt) => Math.max(max, attempt.bestScore || 0), 0);
       const attempt = {
         id: makeId("attempt"),
         setId,
-        versionId: set.currentVersionId,
+        versionId: snapshotEntry?.versionId || set.currentVersionId,
         studentId,
         sessionId: sessionId || null,
         phase,
@@ -3262,7 +3559,9 @@
         completedAt: nowIso(),
         answers: answers || {},
         wrongItemIds,
-        pollAnswers
+        pollAnswers,
+        setTitle: snapshotEntry?.title || set.title,
+        countsTowardGrade: snapshotEntry?.countsTowardGrade ?? (set.countsTowardGrade !== false)
       };
       draft.interactionAttempts.push(attempt);
       if (score === 100) {
@@ -3321,13 +3620,14 @@
   const academicAllowedMethods = new Set([
     "setCurrentUser",
     "updatePreferences",
+    "createClass",
     "createStudent",
     "markNotificationRead",
     "markAllNotificationsRead"
   ]);
 
   function academicMethodSchoolId(draft, method, input, actorId) {
-    if (method === "createStudent") {
+    if (method === "createClass" || method === "createStudent") {
       return input.schoolId || activeAcademicSchoolId(draft, actorId);
     }
     return "";
@@ -3423,6 +3723,9 @@
     requestSessionChange,
     resolveChangeRequest,
     saveInteractionSet,
+    updateInteractionSetMeta,
+    copyInteractionSetToLesson,
+    saveInteractionSetToLibrary,
     rollbackInteractionVersion,
     assignInteractionSessions,
     excludeInteractionSession,

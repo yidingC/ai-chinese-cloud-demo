@@ -29,7 +29,7 @@ describe("academic affairs workspace", () => {
     render(<App />);
     expect(screen.getByRole("heading", { name: "学校教务端" })).toBeInTheDocument();
     expect(screen.getByText("四角色课堂教学管理原型")).toBeInTheDocument();
-    expect(screen.getByText("查看本校班级与学生信息、课程安排，并录入新生。")).toBeInTheDocument();
+    expect(screen.getByText("查看本校班级、学生与课程安排，并新增班级和新生。")).toBeInTheDocument();
     expect(screen.getByText("学生预约 · 教师设计 · 学校教务监督")).toBeInTheDocument();
   });
 
@@ -148,7 +148,7 @@ describe("academic affairs workspace", () => {
     expect(within(dialog).queryByRole("button", { name: /移出/ })).not.toBeInTheDocument();
   });
 
-  it("shows classes before students read-only, with a required primary class when adding a student", async () => {
+  it("lets academic staff create own-school classes while keeping class editing read-only", async () => {
     loginAsAcademic();
     window.location.hash = "#/academic/students";
     render(<App />);
@@ -161,16 +161,30 @@ describe("academic affairs workspace", () => {
     expect((await screen.findAllByRole("button", { name: "查看名单" })).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: /管理学生/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /编辑班级/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /新建学生/ })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /新建班级/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /新建班级/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /新建学生/ })).not.toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole("button", { name: /新建班级/ }));
+    const classDialog = await screen.findByRole("dialog", { name: "新建班级" });
+    const className = "教务新建测试班";
+    expect(within(classDialog).queryByLabelText("教师")).not.toBeInTheDocument();
+    fireEvent.change(within(classDialog).getByLabelText("班级名称"), { target: { value: className } });
+    const saveClassButton = within(classDialog).getByRole("button", { name: "保存班级" });
+    await waitFor(() => expect(saveClassButton).toBeEnabled());
+    fireEvent.click(saveClassButton);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "新建班级" })).not.toBeInTheDocument());
+    expect(await screen.findByText(className)).toBeInTheDocument();
+    expect(within(screen.getByText(className).closest("article")!).getByText("未分配教师")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /编辑班级/ })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "学生" }));
+    expect(screen.getByRole("button", { name: /新建学生/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /新建学生/ }));
     const dialog = await screen.findByRole("dialog", { name: "新建学生档案" });
     expect(within(dialog).getByLabelText("主班级")).toBeInTheDocument();
     expect(within(dialog).getByText("学校教务只能把学生加入本校已有班级")).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
 
-    fireEvent.click(screen.getByRole("tab", { name: "学生" }));
     expect((await screen.findAllByRole("button", { name: /查看完整档案/ })).length).toBeGreaterThan(0);
   });
 
@@ -205,10 +219,14 @@ describe("academic affairs workspace", () => {
 
     expect(await screen.findByRole("heading", { name: "课堂表现" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "课堂表现" })).toHaveAttribute("href", "#/academic/results");
-    expect(screen.getByText("只读查看")).toBeInTheDocument();
+    expect(screen.queryByText("只读查看")).not.toBeInTheDocument();
+    expect(container.querySelector(".analytics-session-nav")).toBeNull();
+    const sessionSelect = screen.getByRole("combobox", { name: "选择课次" });
     await waitFor(() => {
-      expect(container.querySelectorAll(".analytics-session-list button")).toHaveLength(completedOwnSessions.length);
+      expect(within(sessionSelect).getAllByRole("option")).toHaveLength(completedOwnSessions.length + 1);
     });
+    expect(sessionSelect).toHaveValue("__all_sessions__");
+    expect(within(sessionSelect).getByRole("option", { name: "课次汇总（全部课次）" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /新建|编辑|取消|移出/ })).not.toBeInTheDocument();
   });
 
@@ -238,11 +256,19 @@ describe("academic affairs workspace", () => {
 
     expect(await screen.findByRole("heading", { name: "学生成绩" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "学生成绩" })).toHaveAttribute("href", "#/academic/grades");
-    expect(screen.getByText("只读查看")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "印尼圣心学校学生成绩汇总" })).toBeInTheDocument();
-    expect(screen.getByText("当前权重：互动 35% · 作业 35% · 考试 30%")).toBeInTheDocument();
+    expect(screen.queryByText("只读查看")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "印尼圣心学校学生成绩明细" })).toBeInTheDocument();
+    expect(screen.getByText("综合均分")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "成绩趋势" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "能力雷达" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "成绩构成" })).toBeInTheDocument();
+    expect(screen.getAllByText(/权重 \d+%/).length).toBeGreaterThan(0);
 
     const classSelect = screen.getByLabelText("按班级筛选");
+    const filterLabels = Array.from(
+      container.querySelectorAll<HTMLElement>(".results-filter-bar select, .results-filter-bar input")
+    ).map((control) => control.getAttribute("aria-label"));
+    expect(filterLabels).toEqual(["按班级筛选", "统计时间范围", "搜索学生、等级或班级"]);
     ownClasses.forEach((item) => {
       expect(within(classSelect).getByRole("option", { name: item.name })).toBeInTheDocument();
     });
@@ -261,6 +287,7 @@ describe("academic affairs workspace", () => {
 
     const dialog = await screen.findByRole("dialog", { name: /成绩详情/ });
     expect(within(dialog).getByRole("heading", { name: "成绩趋势" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("heading", { name: "成绩构成" })).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: /编辑|录入|补录|发布|删除/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /新建考核|发布成绩|批量录分/ })).not.toBeInTheDocument();
   });
@@ -284,7 +311,7 @@ describe("academic affairs workspace", () => {
 
     expect(await screen.findByRole("heading", { level: 2, name: requested.title })).toBeInTheDocument();
     expect(screen.getAllByText(teacher.name).length).toBeGreaterThan(0);
-    expect(container.querySelector(`.analytics-session-list .active`)?.textContent).toContain(requested.title);
+    expect(screen.getByRole("combobox", { name: "选择课次" })).toHaveValue(requested.id);
   });
 
   it("opens classroom performance from an ended course card", async () => {

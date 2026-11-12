@@ -152,6 +152,11 @@ export function getCurrentInteractionVersion(state: PlatformState, set: Interact
       .sort((a, b) => b.version - a.version)[0];
 }
 
+/** 按指定版本读取互动；用于已锁定课次的历史展示。 */
+export function getInteractionVersionById(state: PlatformState, versionId: string): InteractionVersion | undefined {
+  return state.interactionVersions.find((version) => version.id === versionId);
+}
+
 /**
  * 互动集是否作用于某个课次。
  * sessionIds 未设置 = 作用于该课节全部课次；设置为数组时只出现在列出的课次（空数组 = 均不出现）。
@@ -190,7 +195,34 @@ export function scopeLabel(scope: { sessionIds?: string[]; excludedSessionIds?: 
 }
 
 /** 某一课次在某阶段的材料清单（含来源课节信息）。 */
-export function sessionMaterials(state: PlatformState, session: ClassSession, phase: Phase) {
+export function sessionMaterials(state: PlatformState, session: ClassSession, phase: Phase): Array<{ ref: LessonMaterialRef; material: Material }> {
+  if (session.contentSnapshot) {
+    const seen = new Set<string>();
+    return session.contentSnapshot.materials
+      .filter((entry) => entry.phase === phase)
+      .filter((entry) => {
+        if (seen.has(entry.materialId)) return false;
+        seen.add(entry.materialId);
+        return true;
+      })
+      .map((entry, index): { ref: LessonMaterialRef; material: Material } | null => {
+        const material = state.materials.find((item) => item.id === entry.materialId);
+        if (!material) return null;
+        const version = material.versions.find((item) => item.version === entry.version) ?? material.versions.at(-1);
+        return {
+          ref: {
+            id: `snapshot-${session.id}-${entry.materialId}-${phase}`,
+            materialId: entry.materialId,
+            lessonId: session.lessonId,
+            phase,
+            order: index + 1,
+            published: true
+          },
+          material: version ? { ...material, currentVersion: version.version } : material
+        };
+      })
+      .filter((item): item is { ref: LessonMaterialRef; material: Material } => Boolean(item));
+  }
   return state.materialRefs
     .filter((ref) => ref.lessonId === session.lessonId && ref.phase === phase && materialRefAppliesToSession(ref, session.id))
     .sort((a, b) => a.order - b.order)
@@ -199,14 +231,67 @@ export function sessionMaterials(state: PlatformState, session: ClassSession, ph
 }
 
 export function setsForSession(state: PlatformState, session: ClassSession) {
+  if (session.contentSnapshot) {
+    return session.contentSnapshot.interactions
+      .map((entry) => {
+        const set = state.interactionSets.find((item) => item.id === entry.setId);
+        return set ? {
+          ...set,
+          title: entry.title ?? set.title,
+          phase: entry.phase,
+          countsTowardGrade: entry.countsTowardGrade ?? set.countsTowardGrade,
+          currentVersionId: entry.versionId
+        } : null;
+      })
+      .filter((set): set is InteractionSet => Boolean(set))
+      .sort((a, b) => a.order - b.order);
+  }
   return state.interactionSets
-    .filter((set) => set.lessonId === session.lessonId && setAppliesToSession(set, session.id))
+    .filter((set) => set.scope !== "library" && set.lessonId === session.lessonId && setAppliesToSession(set, session.id))
     .sort((a, b) => a.order - b.order);
 }
 
-export function lessonContent(state: PlatformState, lessonId: string, phase?: Phase, sessionId?: string | null) {
+export function lessonContent(
+  state: PlatformState,
+  lessonId: string,
+  phase?: Phase,
+  sessionId?: string | null
+): { sets: InteractionSet[]; materials: Material[] } {
+  const session = sessionId ? state.sessions.find((item) => item.id === sessionId) : undefined;
+  if (session?.contentSnapshot) {
+    const sets = session.contentSnapshot.interactions
+      .map((entry) => {
+        const set = state.interactionSets.find((item) => item.id === entry.setId);
+        return set ? {
+          ...set,
+          title: entry.title ?? set.title,
+          phase: entry.phase,
+          countsTowardGrade: entry.countsTowardGrade ?? set.countsTowardGrade,
+          currentVersionId: entry.versionId
+        } : null;
+      })
+      .filter((set): set is InteractionSet => Boolean(set))
+      .filter((set) => !phase || set.phase === phase)
+      .sort((a, b) => a.order - b.order);
+    const seen = new Set<string>();
+    const materials = session.contentSnapshot.materials
+      .filter((entry) => !phase || entry.phase === phase)
+      .filter((entry) => {
+        if (seen.has(entry.materialId)) return false;
+        seen.add(entry.materialId);
+        return true;
+      })
+      .map((entry) => {
+        const material = state.materials.find((item) => item.id === entry.materialId);
+        if (!material || material.status !== "published") return null;
+        const version = material.versions.find((item) => item.version === entry.version) ?? material.versions.at(-1);
+        return version ? { ...material, currentVersion: version.version } : material;
+      })
+      .filter((material): material is Material => Boolean(material));
+    return { sets, materials };
+  }
   const sets = state.interactionSets
-    .filter((set) => set.lessonId === lessonId && (!phase || set.phase === phase) && setAppliesToSession(set, sessionId))
+    .filter((set) => set.scope !== "library" && set.lessonId === lessonId && (!phase || set.phase === phase) && setAppliesToSession(set, sessionId))
     .sort((a, b) => a.order - b.order);
   const refs = state.materialRefs
     .filter((ref) => ref.lessonId === lessonId && ref.published && (!phase || ref.phase === phase))
@@ -216,7 +301,7 @@ export function lessonContent(state: PlatformState, lessonId: string, phase?: Ph
     sets,
     materials: refs
       .map((ref) => state.materials.find((material) => material.id === ref.materialId))
-      .filter((material) => material && material.status === "published")
+      .filter((material): material is Material => Boolean(material && material.status === "published"))
   };
 }
 
