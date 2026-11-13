@@ -421,7 +421,7 @@ export function TeacherSchedule() {
           return (
             <div className="calendar-session-actions">
               <Button size="sm" variant="soft" onClick={() => navigate(`/teacher/session/${session.id}/design`)}>
-                <Layers3 size={15} /> {status === "upcoming" ? "备课" : "查看设计"}
+                <Layers3 size={15} /> {status === "upcoming" ? "备课" : "查看备课"}
               </Button>
               <Button
                 size="sm"

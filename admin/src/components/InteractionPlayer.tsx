@@ -19,12 +19,15 @@ import { CSS } from "@dnd-kit/utilities";
 import { Check, GripVertical, RotateCcw, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { InteractionItem, InteractionMedia } from "../domain/types";
-import { INTERACTION_TYPE_LABELS, INTERACTION_TYPE_SHORT_LABELS } from "../lib/interactionTypes";
+import { INTERACTION_TYPE_LABELS, INTERACTION_TYPE_SHORT_LABELS, isScorableInteractionType } from "../lib/interactionTypes";
+import { scoreInteractionItems } from "../lib/interactionScoring";
 import { Badge, Button, ProgressBar } from "./ui";
 import { StudentPhoneMock } from "./StudentPhoneMock";
 
 export interface PlayerResult {
-  score: number;
+  /** 没有可判分题时为 null，只记录参与。 */
+  score: number | null;
+  scoredItemCount: number;
   answers: Record<string, unknown>;
   wrongItemIds: string[];
   pollAnswers: Record<string, string>;
@@ -87,12 +90,10 @@ export function InteractionPlayer({
       setIndex((value) => value + 1);
       return;
     }
-    const scored = items.filter((item) => item.type !== "poll");
-    const correctCount = scored.filter((item) => results[item.id] === true).length;
-    const score = scored.length ? Math.round((correctCount / scored.length) * 100) : 100;
-    const wrongItemIds = scored.filter((item) => results[item.id] !== true).map((item) => item.id);
+    const { score, scoredItemCount, wrongItemIds } = scoreInteractionItems(items, results);
     const payload = {
       score,
+      scoredItemCount,
       answers,
       wrongItemIds,
       pollAnswers,
@@ -122,6 +123,7 @@ export function InteractionPlayer({
 
   const isResolved = current.type === "poll" ? Boolean(pollAnswers[current.id]) : results[current.id] !== undefined && results[current.id] !== null;
   const isCorrect = results[current.id] === true;
+  const isParticipationOnly = !isScorableInteractionType(current.type);
   const correctChoices = (current.choices ?? []).filter((choice) => choice.isCorrect).map((choice) => choice.text);
   const correctAnswerText =
     current.type === "picture" || current.type === "situation" || current.type === "dialogue" || current.type === "listening"
@@ -159,9 +161,13 @@ export function InteractionPlayer({
 
       {done ? (
         <div className="player-app-done">
-          <span className="player-app-score">{finalResult?.score}</span>
+          <span className="player-app-score">{finalResult?.score ?? t("student.player.participationComplete")}</span>
           <strong>本节互动已完成</strong>
-          <p>得分 {finalResult?.score} · 用时 {finalResult?.elapsedSeconds} 秒 · 错题 {finalResult?.wrongItemIds.length} 道</p>
+          <p>
+            {finalResult?.score === null
+              ? t("student.player.participationSummary", { seconds: finalResult?.elapsedSeconds ?? 0 })
+              : t("student.player.summary", { seconds: finalResult?.elapsedSeconds ?? 0, wrong: finalResult?.wrongItemIds.length ?? 0 })}
+          </p>
           <Button onClick={resetRun}><RotateCcw size={15} /> 重做一遍</Button>
         </div>
       ) : (
@@ -304,11 +310,19 @@ export function InteractionPlayer({
       </div>
 
       {isResolved && (
-        <div className={`answer-feedback ${isCorrect || current.type === "poll" ? "correct" : "incorrect"}`}>
-          {isCorrect || current.type === "poll" ? <Check size={18} /> : <X size={18} />}
+        <div className={`answer-feedback ${isCorrect || isParticipationOnly ? "correct" : "incorrect"}`}>
+          {isCorrect || isParticipationOnly ? <Check size={18} /> : <X size={18} />}
           <div>
-            <strong>{current.type === "poll" ? t("student.pollThanks") : isCorrect ? t("student.correct") : t("student.incorrect")}</strong>
-            {!isCorrect && correctAnswerText && <p>正确答案：{correctAnswerText}</p>}
+            <strong>
+              {current.type === "poll"
+                ? t("student.pollThanks")
+                : isParticipationOnly
+                  ? t("student.player.participationRecorded")
+                  : isCorrect
+                    ? t("student.correct")
+                    : t("student.incorrect")}
+            </strong>
+            {!isCorrect && !isParticipationOnly && correctAnswerText && <p>正确答案：{correctAnswerText}</p>}
             <p>{current.explanation}</p>
           </div>
         </div>
@@ -375,7 +389,7 @@ export function StudentPhonePreview({
   return (
     <div className="student-preview-modal">
       <InteractionPlayer items={items} preview variant="app" onClose={onClose} />
-      <p className="student-preview-modal-hint">按学生在 APP 里做题的顺序预览，不计分、不写作答记录。</p>
+      <p className="student-preview-modal-hint">按学生在 APP 里做题的顺序预览，不计入成绩、不写作答记录。</p>
     </div>
   );
 }

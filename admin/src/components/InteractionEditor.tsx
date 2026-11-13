@@ -13,7 +13,7 @@ import type {
 } from "../domain/types";
 import { Button, Field, LabeledInput, Select, TextInput } from "./ui";
 
-const typeOptions: Array<{ type: InteractionType; label: string; hint: string }> = [
+export const INTERACTION_TYPE_OPTIONS: Array<{ type: InteractionType; label: string; hint: string }> = [
   { type: "match", label: "连线配对", hint: "左右点击配对，适合词汇和释义。" },
   { type: "memory", label: "翻牌记忆", hint: "翻开两张卡片寻找配对。" },
   { type: "choice", label: "单选 / 多选", hint: "选择一个或多个正确选项。" },
@@ -276,6 +276,53 @@ export function createInteractionItem(type: InteractionType): InteractionItem {
   };
 }
 
+const CHOICE_TYPES: InteractionType[] = ["choice", "picture", "situation", "dialogue", "listening"];
+const PAIR_TYPES: InteractionType[] = ["match", "memory", "picture-match"];
+const MEDIA_TYPES: InteractionType[] = ["picture", "situation", "picture-talk"];
+const SPEAKING_TYPES: InteractionType[] = ["read-aloud", "picture-talk", "open-qa"];
+
+/**
+ * 换题型时尽量保留老师已经写好的公共内容：
+ * 题干、解析、图片、选项和配对会迁移到兼容的新题型，专属字段再使用新题型默认值。
+ */
+export function changeInteractionItemType(item: InteractionItem, type: InteractionType): InteractionItem {
+  const next = createInteractionItem(type);
+  const converted: InteractionItem = {
+    ...next,
+    id: item.id,
+    prompt: item.prompt || next.prompt,
+    explanation: item.explanation || next.explanation
+  };
+
+  if (item.media && MEDIA_TYPES.includes(item.type) && MEDIA_TYPES.includes(type)) {
+    converted.media = { ...item.media };
+  }
+  if (item.promptPinyin && (type === "picture" || type === "read-aloud")) {
+    converted.promptPinyin = item.promptPinyin;
+  }
+  if (item.choices?.length && CHOICE_TYPES.includes(item.type) && CHOICE_TYPES.includes(type)) {
+    converted.choices = item.choices.map((choice) => ({ ...choice }));
+    if (type !== "choice") delete converted.multiple;
+  }
+  if (item.pairs?.length && PAIR_TYPES.includes(item.type) && PAIR_TYPES.includes(type)) {
+    converted.pairs = item.pairs.map((pair) => ({
+      ...pair,
+      media: pair.media ? { ...pair.media } : undefined
+    }));
+  }
+  if (SPEAKING_TYPES.includes(item.type) && SPEAKING_TYPES.includes(type)) {
+    if (item.scores?.length) converted.scores = item.scores.map((score) => ({ ...score }));
+    if (item.sampleAnswer) converted.sampleAnswer = item.sampleAnswer;
+    if (item.sampleAnswerPinyin) converted.sampleAnswerPinyin = item.sampleAnswerPinyin;
+    if (item.samplePattern) converted.samplePattern = item.samplePattern;
+    if (item.speakingHint) converted.speakingHint = item.speakingHint;
+    if (item.speakingWords?.length) converted.speakingWords = item.speakingWords.map((word) => ({ ...word }));
+    if (item.media && type === "picture-talk") converted.media = { ...item.media };
+    if (item.mediaTranslation) converted.mediaTranslation = item.mediaTranslation;
+  }
+  return converted;
+}
+
 /** 语音题型（跟读 / 看图说话 / 开放问答）的占位评分项。 */
 function defaultSpeakingScores(): InteractionScoreItem[] {
   return [
@@ -324,7 +371,7 @@ export function InteractionEditor({
           <span>共 {items.length} 题，拖动功能在学生学习端呈现。</span>
         </div>
         <div className="editor-add-group">
-          {typeOptions.map((option) => (
+          {INTERACTION_TYPE_OPTIONS.map((option) => (
             <Button key={option.type} size="sm" variant="secondary" onClick={() => addItem(option.type)} title={option.hint}>
               <Plus size={15} /> {option.label}
             </Button>
@@ -354,10 +401,10 @@ export function InteractionEditor({
               <span className="editor-index">{index + 1}</span>
               <div>
                 <strong>
-                  {typeOptions.find((option) => option.type === item.type)?.label}
+                  {INTERACTION_TYPE_OPTIONS.find((option) => option.type === item.type)?.label}
                   {!single && isActive && <span className="editor-active-chip">编辑中</span>}
                 </strong>
-                <small>{typeOptions.find((option) => option.type === item.type)?.hint}</small>
+                <small>{INTERACTION_TYPE_OPTIONS.find((option) => option.type === item.type)?.hint}</small>
               </div>
               {!single && (
                 <Button size="icon" variant="ghost" onClick={() => removeItem(item.id)} aria-label="删除题目">

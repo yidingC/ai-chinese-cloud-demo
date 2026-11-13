@@ -214,10 +214,11 @@ export function buildTeacherLiveDemo(state: PlatformState, teacherId: string, re
   const teacherSessions = state.sessions
     .filter((session) => session.teacherId === teacherId && session.status === "published")
     .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
-  const base = teacherSessions.find((session) => session.id === requestedSessionId) ??
-    teacherSessions.find((session) => session.id === "session-live") ??
-    teacherSessions.find((session) => session.lessonId === "lesson-greetings") ??
-    teacherSessions[0];
+  const base = requestedSessionId
+    ? teacherSessions.find((session) => session.id === requestedSessionId)
+    : teacherSessions.find((session) => session.id === "session-live") ??
+      teacherSessions.find((session) => session.lessonId === "lesson-greetings") ??
+      teacherSessions[0];
   if (!base) return null;
 
   const lesson = getLesson(state, base.lessonId);

@@ -80,10 +80,31 @@ export function GradesWorkspace({
     () => buildGradeAnalytics(state, range, { teacherId, schoolId, classId: classId || undefined }),
     [classId, range, schoolId, state, teacherId]
   );
-  const filteredStudents = analytics.students.filter((student) => {
-    const keyword = query.trim().toLowerCase();
-    return !keyword || `${student.name} ${student.level} ${student.classLabel}`.toLowerCase().includes(keyword);
-  });
+  const studentKeyword = query.trim().toLowerCase();
+  const matchesStudent = (student: StudentGradeSummary) =>
+    !studentKeyword || `${student.name} ${student.level}`.toLowerCase().includes(studentKeyword);
+  const filteredStudents = analytics.students.filter(matchesStudent);
+  const studentCountLabel = (matched: number, total: number) =>
+    studentKeyword ? `匹配 ${matched} 位学生 / 共 ${total} 位学生` : `${total} 位学生`;
+  const rosterSizeForClass = (classId?: string) => {
+    if (!classId) return analytics.students.length;
+    const activeCount = state.classEnrollments.filter((item) => item.classId === classId && item.status === "active").length;
+    return activeCount || analytics.students.filter((student) => student.classIds.includes(classId)).length;
+  };
+  const renderStudentTableTools = (matched: number, total: number) => (
+    <div className="grade-table-heading-tools">
+      <div className="search-box grade-table-search">
+        <Search size={16} />
+        <TextInput
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="搜索学生或等级"
+          aria-label="搜索学生或等级"
+        />
+      </div>
+      <Badge tone="purple">{studentCountLabel(matched, total)}</Badge>
+    </div>
+  );
   const statistics = [
     {
       label: "综合均分",
@@ -151,7 +172,7 @@ export function GradesWorkspace({
     });
     return [...groups.values()].sort((a, b) => new Date(b.latestAt).getTime() - new Date(a.latestAt).getTime());
   }, [interactionRecords]);
-  const interactionStudentRows = filteredStudents.map((student) => {
+  const interactionAllStudentRows = analytics.students.map((student) => {
     const records = student.records.filter((record) => record.category === "interaction");
     const scores = records
       .map((record) => record.normalizedScore)
@@ -169,7 +190,8 @@ export function GradesWorkspace({
       latestAt: records[0]?.occurredAt ?? ""
     };
   }).filter((row) => row.records.length > 0);
-  const buildAssessmentStudentRows = (category: AssessmentCategory) => filteredStudents.map((student) => {
+  const interactionStudentRows = interactionAllStudentRows.filter((row) => matchesStudent(row.student));
+  const buildAssessmentStudentRows = (category: AssessmentCategory) => analytics.students.map((student) => {
     const records = student.records.filter((record) => record.category === category);
     return {
       student,
@@ -180,22 +202,29 @@ export function GradesWorkspace({
       latestAt: records[0]?.occurredAt ?? ""
     };
   }).filter((row) => row.records.length > 0);
-  const homeworkStudentRows = buildAssessmentStudentRows("homework");
-  const examStudentRows = buildAssessmentStudentRows("exam");
+  const homeworkAllStudentRows = buildAssessmentStudentRows("homework");
+  const examAllStudentRows = buildAssessmentStudentRows("exam");
+  const homeworkStudentRows = homeworkAllStudentRows.filter((row) => matchesStudent(row.student));
+  const examStudentRows = examAllStudentRows.filter((row) => matchesStudent(row.student));
   const assessmentTab = tab === "homework" || tab === "exam" ? tab : null;
   const assessmentStudentRows = assessmentTab === "homework"
     ? homeworkStudentRows
     : assessmentTab === "exam"
       ? examStudentRows
       : [];
+  const assessmentAllStudentRows = assessmentTab === "homework"
+    ? homeworkAllStudentRows
+    : assessmentTab === "exam"
+      ? examAllStudentRows
+      : [];
   const assessmentLabel = assessmentTab ? categoryLabels[assessmentTab] : "";
   const absenceLabel = assessmentTab === "homework" ? "缺交" : "缺考";
   const homeworkAssessments = assessments.filter((item) => item.category === "homework");
   const examAssessments = assessments.filter((item) => item.category === "exam");
   const visibleAssessments = assessmentTab ? assessments.filter((item) => item.category === assessmentTab) : [];
-  const interactionTabCount = dimension === "student" ? interactionStudentRows.length : interactionGroups.length;
-  const homeworkTabCount = dimension === "student" ? homeworkStudentRows.length : homeworkAssessments.length;
-  const examTabCount = dimension === "student" ? examStudentRows.length : examAssessments.length;
+  const interactionTabCount = dimension === "student" ? interactionAllStudentRows.length : interactionGroups.length;
+  const homeworkTabCount = dimension === "student" ? homeworkAllStudentRows.length : homeworkAssessments.length;
+  const examTabCount = dimension === "student" ? examAllStudentRows.length : examAssessments.length;
 
   function openStudentDetail(studentId: string, category: GradeCategory) {
     setDetailGradeCategory(category);
@@ -222,11 +251,7 @@ export function GradesWorkspace({
           <option value="">全部班级</option>
           {classes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
         </Select>
-        <GradePeriodPicker value={range} onChange={setRange} compact={oversight} />
-        <div className="search-box">
-          <Search size={16} />
-          <TextInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索学生、等级或班级" aria-label="搜索学生、等级或班级" />
-        </div>
+        <GradePeriodPicker value={range} onChange={setRange} compact />
       </Card>
 
       <section className="stat-grid stat-grid-4">
@@ -267,7 +292,7 @@ export function GradesWorkspace({
         <Card className="grade-table-card">
           <div className="grade-table-heading">
             <div><h2>{summaryTitle}</h2><p>点击学生查看个人成绩趋势、能力雷达与成绩明细。</p></div>
-            <Badge tone="purple">{filteredStudents.length} 位学生</Badge>
+            {renderStudentTableTools(filteredStudents.length, analytics.students.length)}
           </div>
           <div className="data-table grade-student-table">
             <div className="data-table-head">
@@ -290,7 +315,16 @@ export function GradesWorkspace({
               </button>
             ))}
           </div>
-          {filteredStudents.length === 0 && <EmptyState title="这段时间没有学生成绩" description={oversight ? "调整时间或班级后重试；成绩由任课教师录入后自动汇总。" : "调整时间或班级后重试，也可以发布一项正式考核。"} />}
+          {filteredStudents.length === 0 && (
+            <EmptyState
+              title={studentKeyword && analytics.students.length > 0 ? "没有匹配的学生" : "这段时间没有学生成绩"}
+              description={studentKeyword && analytics.students.length > 0
+                ? "换一个姓名或等级试试；上方统计仍按当前班级整体显示。"
+                : oversight
+                  ? "调整时间或班级后重试；成绩由任课教师录入后自动汇总。"
+                  : "调整时间或班级后重试，也可以发布一项正式考核。"}
+            />
+          )}
         </Card>
       )}
 
@@ -301,7 +335,7 @@ export function GradesWorkspace({
               <h2>{selectedClass ? `${selectedClass.name}互动练习表现` : `${allScopeLabel}学生互动练习表现`}</h2>
               <p>每名学生一行；同一互动取时间范围内最好成绩，用时按已完成的互动计算。</p>
             </div>
-            <Badge tone="purple">{interactionStudentRows.length} 位学生</Badge>
+            {renderStudentTableTools(interactionStudentRows.length, interactionAllStudentRows.length)}
           </div>
           <div className="data-table interaction-student-table">
             <div className="data-table-head">
@@ -319,7 +353,14 @@ export function GradesWorkspace({
               </button>
             ))}
           </div>
-          {interactionStudentRows.length === 0 && <EmptyState title="当前范围没有互动成绩" description="学生完成计入成绩的互动后，会在这里按学生汇总。" />}
+          {interactionStudentRows.length === 0 && (
+            <EmptyState
+              title={studentKeyword && interactionAllStudentRows.length > 0 ? "没有匹配的学生" : "当前范围没有互动成绩"}
+              description={studentKeyword && interactionAllStudentRows.length > 0
+                ? "换一个姓名或等级试试；上方统计仍按当前班级整体显示。"
+                : "学生完成带客观题的互动后，会在这里按学生汇总。"}
+            />
+          )}
         </Card>
       )}
 
@@ -337,6 +378,7 @@ export function GradesWorkspace({
               : 0;
             const wrongItemTotal = group.records.reduce((sum, record) => sum + (record.wrongItemCount ?? 0), 0);
             const classGroup = state.classes.find((item) => item.id === group.classId);
+            const rosterSize = Math.max(rosterSizeForClass(group.classId), group.records.length);
             return (
               <Card className="grade-assessment-card" key={group.id}>
                 <div className="grade-assessment-head">
@@ -349,19 +391,19 @@ export function GradesWorkspace({
                     </div>
                     <p>{classGroup?.name ?? "未关联班级"} · {group.lessonTitle ?? "未关联课节"} · {formatDateTime(group.latestAt, state.ui.timeZone, state.ui.language)}</p>
                   </div>
-                  <Badge tone="purple">{group.records.length} 人完成</Badge>
+                  <Badge tone="purple">{group.records.length}/{rosterSize} 人完成</Badge>
                 </div>
                 <div className="grade-assessment-metrics">
-                  <div><strong>{average ?? "--"}</strong><small>班级均分</small></div>
-                  <div><strong>{group.records.length}</strong><small>完成人数</small></div>
+                  <div><strong>{average ?? "--"}</strong><small>完成学生均分</small></div>
+                  <div><strong>{group.records.length}/{rosterSize}</strong><small>完成人数</small></div>
                   <div><strong>{wrongItemTotal}</strong><small>错题总数</small></div>
                   <div><strong>{averageSeconds} 秒</strong><small>平均用时</small></div>
                 </div>
-                <div className="grade-assessment-progress"><ProgressBar value={average ?? 0} tone="mint" /><small>按范围内最佳一次成绩统计</small></div>
+                <div className="grade-assessment-progress"><ProgressBar value={average ?? 0} tone="mint" /><small>按范围内最佳一次成绩统计 · 仅计完成学生</small></div>
               </Card>
             );
           })}
-          {interactionGroups.length === 0 && <EmptyState title="当前范围没有互动成绩" description="学生完成计入成绩的互动后，会在这里按互动汇总。" />}
+          {interactionGroups.length === 0 && <EmptyState title="当前范围没有互动成绩" description="学生完成带客观题的互动后，会在这里按互动汇总。" />}
         </div>
       )}
 
@@ -372,7 +414,7 @@ export function GradesWorkspace({
               <h2>{selectedClass ? `${selectedClass.name}${assessmentLabel}表现` : `${allScopeLabel}学生${assessmentLabel}表现`}</h2>
               <p>每名学生一行；{absenceLabel}按 0 分。</p>
             </div>
-            <Badge tone="purple">{assessmentStudentRows.length} 位学生</Badge>
+            {renderStudentTableTools(assessmentStudentRows.length, assessmentAllStudentRows.length)}
           </div>
           <div className="data-table assessment-student-table">
             <div className="data-table-head">
@@ -389,7 +431,14 @@ export function GradesWorkspace({
               </button>
             ))}
           </div>
-          {assessmentStudentRows.length === 0 && <EmptyState title={`当前范围没有${assessmentLabel}成绩`} description="教学管理发布考核成绩后会自动出现在这里。" />}
+          {assessmentStudentRows.length === 0 && (
+            <EmptyState
+              title={studentKeyword && assessmentAllStudentRows.length > 0 ? "没有匹配的学生" : `当前范围没有${assessmentLabel}成绩`}
+              description={studentKeyword && assessmentAllStudentRows.length > 0
+                ? "换一个姓名或等级试试；上方统计仍按当前班级整体显示。"
+                : "教学管理发布考核成绩后会自动出现在这里。"}
+            />
+          )}
         </Card>
       )}
 
@@ -399,6 +448,7 @@ export function GradesWorkspace({
             const classGroup = state.classes.find((item) => item.id === assessment.classId);
             const scores = state.assessmentScores.filter((item) => item.assessmentId === assessment.id);
             const counted = scores.filter((item) => item.status === "graded" || item.status === "absent");
+            const assessmentAverageLabel = assessment.category === "homework" ? "本次作业均分" : "本次考试均分";
             const average = counted.length
               ? Math.round(counted.reduce((sum, item) => sum + (item.normalizedScore ?? 0), 0) / counted.length * 10) / 10
               : null;
@@ -415,11 +465,11 @@ export function GradesWorkspace({
                   <Button variant="secondary" onClick={() => setQuestionAssessmentId(assessment.id)}><ListChecks size={16} /> 按题目查看</Button>
                 </div>
                 <div className="grade-assessment-metrics is-three">
-                  <div><strong>{average ?? "--"}</strong><small>班级均分</small></div>
+                  <div><strong>{average ?? "--"}</strong><small>{assessmentAverageLabel}</small></div>
                   <div><strong>{absent}</strong><small>{absenceLabel}</small></div>
                   <div><strong>{scores.length}</strong><small>名单人数</small></div>
                 </div>
-                <div className="grade-assessment-progress"><ProgressBar value={completion} tone={completion === 100 ? "mint" : "orange"} /><small>已处理 {counted.length}/{scores.length}</small></div>
+                <div className="grade-assessment-progress"><ProgressBar value={completion} tone={completion === 100 ? "mint" : "orange"} /><small>已处理 {counted.length}/{scores.length} · {absenceLabel}按 0 分</small></div>
               </Card>
             );
           })}

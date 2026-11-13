@@ -57,6 +57,42 @@ describe("grade pages and role routes", () => {
     expect(screen.queryByText("周三晚 A 班 / 印尼圣心学校7年级A班")).not.toBeInTheDocument();
   });
 
+  it("keeps the grade overview independent from the student detail search", async () => {
+    platform.setCurrentUser("teacher-lina");
+    refreshAppStore();
+    window.location.hash = "#/teacher/grades";
+    render(<App />);
+
+    const summaryHeading = await screen.findByRole("heading", { name: "学生成绩明细" });
+    const summaryCard = summaryHeading.closest(".grade-table-card") as HTMLElement;
+    const filterBar = document.querySelector(".grade-filter-bar") as HTMLElement;
+    const statGrid = document.querySelector(".stat-grid") as HTMLElement;
+    expect(filterBar.querySelector("input")).toBeNull();
+    expect(within(summaryCard).getByLabelText("搜索学生或等级")).toBeInTheDocument();
+    expect(within(summaryCard).getByText("5 位学生")).toBeInTheDocument();
+    expect(within(statGrid).getByText("79.3")).toBeInTheDocument();
+    expect(within(statGrid).getByText("5 位学生")).toBeInTheDocument();
+
+    const interactionTab = screen.getByRole("tab", { name: /互动练习/ });
+    const interactionTabCount = interactionTab.querySelector("span")?.textContent;
+    fireEvent.change(within(summaryCard).getByLabelText("搜索学生或等级"), { target: { value: "Raymond" } });
+
+    expect(within(summaryCard).getByText("匹配 1 位学生 / 共 5 位学生")).toBeInTheDocument();
+    expect(summaryCard.querySelectorAll(".grade-student-table .data-table-row")).toHaveLength(1);
+    expect(within(statGrid).getByText("79.3")).toBeInTheDocument();
+    expect(within(statGrid).getByText("5 位学生")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /互动练习/ }).querySelector("span")?.textContent).toBe(interactionTabCount);
+
+    fireEvent.click(screen.getByRole("tab", { name: /互动练习/ }));
+    const interactionHeading = await screen.findByRole("heading", { name: "全部学生互动练习表现" });
+    const interactionCard = interactionHeading.closest(".grade-table-card") as HTMLElement;
+    expect(within(interactionCard).getByLabelText("搜索学生或等级")).toHaveValue("Raymond");
+    expect(within(interactionCard).getByText(/匹配 1 位学生 \/ 共 \d+ 位学生/)).toBeInTheDocument();
+
+    fireEvent.change(within(interactionCard).getByLabelText("搜索学生或等级"), { target: { value: "不存在" } });
+    expect(within(interactionCard).getByText("没有匹配的学生")).toBeInTheDocument();
+  });
+
   it("keeps materials and interactions as separate teacher libraries", async () => {
     platform.setCurrentUser("teacher-lina");
     refreshAppStore();
@@ -89,15 +125,31 @@ describe("grade pages and role routes", () => {
     expect(screen.getByLabelText("教学场景")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /破冰热身/ })).toBeInTheDocument();
 
-    const title = screen.getAllByText("问候与寒暄 · 破冰热身")[0];
+    const title = screen.getAllByRole("heading", { name: "问候与寒暄" })[0];
     const card = title.closest(".round-template-card") as HTMLElement;
-    expect(card).toHaveTextContent("3 道题");
+    expect(card).toHaveTextContent("破冰热身");
+    expect(card).toHaveTextContent("4 题");
     expect(within(card).getByRole("button", { name: /复用这一轮/ })).toBeInTheDocument();
 
     fireEvent.click(within(card).getByRole("button", { name: /复用这一轮/ }));
-    const editorDialog = await screen.findByRole("dialog", { name: "新建互动 · 编辑题目" });
+    const editorDialog = await screen.findByRole("dialog", { name: "新建互动" });
     expect(within(editorDialog).getByRole("heading", { name: "题目编辑" })).toBeInTheDocument();
-    expect(within(editorDialog).getByRole("heading", { name: "问候与寒暄 · 破冰热身" })).toBeInTheDocument();
+    expect(within(editorDialog).getByLabelText("互动标题")).toHaveValue("问候与寒暄 · 破冰热身");
+    expect(within(editorDialog).queryByText("这是公共模板母版，当前只读")).not.toBeInTheDocument();
+    expect(within(editorDialog).queryByRole("button", { name: "添加题目" })).not.toBeInTheDocument();
+    expect(within(editorDialog).queryByRole("button", { name: "保存本题" })).not.toBeInTheDocument();
+
+    const libraryCount = platform.getState().interactionSets.filter((set) => set.scope === "library").length;
+    fireEvent.click(within(editorDialog).getByRole("button", { name: "保存到我的互动库" }));
+
+    const ownCopyDialog = await screen.findByRole("dialog", { name: "编辑题目" });
+    expect(within(ownCopyDialog).queryByText("已保存到我的互动库")).not.toBeInTheDocument();
+    expect(within(ownCopyDialog).getByRole("button", { name: "添加题目" })).toBeInTheDocument();
+    expect(within(ownCopyDialog).getByRole("button", { name: "保存本题" })).toBeInTheDocument();
+    expect(within(ownCopyDialog).getByRole("button", { name: "保存更改" })).toBeInTheDocument();
+    const copiedSets = platform.getState().interactionSets.filter((set) => set.scope === "library");
+    expect(copiedSets).toHaveLength(libraryCount + 1);
+    expect(copiedSets.some((set) => set.title === "问候与寒暄 · 破冰热身" && set.origin === "library")).toBe(true);
   });
 
   it("shows a multi-question interaction as one round", async () => {
@@ -153,7 +205,7 @@ describe("grade pages and role routes", () => {
       const primary = card.querySelector<HTMLButtonElement>(".operator-session-actions .button-primary");
       const design = card.querySelector<HTMLButtonElement>(".operator-session-actions .button-soft");
       expect(primary?.textContent).toMatch(/进入课堂|查看结果/);
-      expect(design?.textContent).toMatch(/备课|查看设计/);
+      expect(design?.textContent).toMatch(/备课/);
     });
   });
 
@@ -229,12 +281,19 @@ describe("grade pages and role routes", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "内容维度" }));
     expect(await screen.findByText("互动体验 · 八大新题型")).toBeInTheDocument();
-    expect(screen.getAllByText("按范围内最佳一次成绩统计").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/按范围内最佳一次成绩统计/).length).toBeGreaterThan(0);
+    const interactionCard = (await screen.findByText("互动体验 · 八大新题型")).closest(".grade-assessment-card") as HTMLElement;
+    expect(within(interactionCard).getByText("完成学生均分")).toBeInTheDocument();
+    expect(within(interactionCard).getByText("完成人数").closest("div")).toHaveTextContent(/\d+\/\d+/);
 
     fireEvent.click(screen.getByRole("tab", { name: /作业/ }));
     expect(await screen.findByText("周末复习 · 第 3 次作业")).toBeInTheDocument();
+    const homeworkCard = screen.getByText("周末复习 · 第 3 次作业").closest(".grade-assessment-card") as HTMLElement;
+    expect(within(homeworkCard).getByText("本次作业均分")).toBeInTheDocument();
+    expect(within(homeworkCard).getByText(/缺交按 0 分/)).toBeInTheDocument();
     fireEvent.click((await screen.findAllByRole("button", { name: "按题目查看" }))[0]);
     const accuracyDialog = await screen.findByRole("dialog", { name: "题目正确率" });
+    expect(within(accuracyDialog).getByText("本次均分")).toBeInTheDocument();
     expect(within(accuracyDialog).getByText("听音选择")).toBeInTheDocument();
     expect(within(accuracyDialog).getByText("听力理解")).toBeInTheDocument();
     expect(within(accuracyDialog).getByText(/演示口径/)).toBeInTheDocument();
@@ -242,6 +301,9 @@ describe("grade pages and role routes", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: /考试/ }));
     expect(await screen.findByText("周测 · 问候与餐厅表达")).toBeInTheDocument();
+    const examCard = screen.getByText("周测 · 问候与餐厅表达").closest(".grade-assessment-card") as HTMLElement;
+    expect(within(examCard).getByText("本次考试均分")).toBeInTheDocument();
+    expect(within(examCard).getByText(/缺考按 0 分/)).toBeInTheDocument();
   });
 
   it("keeps the teacher dashboard focused on the current task and today's remaining schedule", async () => {

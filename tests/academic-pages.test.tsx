@@ -268,7 +268,9 @@ describe("academic affairs workspace", () => {
     const filterLabels = Array.from(
       container.querySelectorAll<HTMLElement>(".results-filter-bar select, .results-filter-bar input")
     ).map((control) => control.getAttribute("aria-label"));
-    expect(filterLabels).toEqual(["按班级筛选", "统计时间范围", "搜索学生、等级或班级"]);
+    expect(filterLabels).toEqual(["按班级筛选", "统计时间范围"]);
+    const summaryCard = screen.getByRole("heading", { name: "印尼圣心学校学生成绩明细" }).closest(".grade-table-card") as HTMLElement;
+    expect(within(summaryCard).getByLabelText("搜索学生或等级")).toBeInTheDocument();
     ownClasses.forEach((item) => {
       expect(within(classSelect).getByRole("option", { name: item.name })).toBeInTheDocument();
     });

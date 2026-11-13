@@ -205,7 +205,7 @@ export interface SessionInteractionSnapshot {
   phase: Phase;
   /** 开始时冻结的轮次标题与阶段，避免课后改名影响历史课次。 */
   title?: string;
-  /** 开始时冻结的计分口径。 */
+  /** @deprecated 成绩已改为按题型判断，仅为兼容旧快照保留。 */
   countsTowardGrade?: boolean;
 }
 
@@ -404,8 +404,8 @@ export interface InteractionSet {
   sessionIds?: string[];
   /** 从这里列出的课次中排除；用于「全课节」范围下单独移出某一课次。 */
   excludedSessionIds?: string[];
-  /** 是否把该互动的成绩计入互动练习分类；纯投票和语音占位默认关闭。 */
-  countsTowardGrade: boolean;
+  /** @deprecated 成绩已改为按题型判断，仅为兼容旧快照保留。 */
+  countsTowardGrade?: boolean;
   /** library = 互动库母版；lesson = 课节副本。旧数据缺省按 lesson 处理。 */
   scope?: "library" | "lesson";
   /** 课节副本来源的互动库母版，仅用于溯源，不实时联动。 */
@@ -416,6 +416,8 @@ export interface InteractionSet {
   tags?: string[];
   /** 来源：旧数据迁移、老师手动新建、从库复制、互动库母版。 */
   origin?: "legacy" | "manual" | "copied" | "library";
+  /** 互动库软删除时间；已复制到课次的副本不受影响。 */
+  deletedAt?: string;
 }
 
 export interface GradePolicy {
@@ -519,7 +521,8 @@ export interface InteractionAttempt {
   studentId: string;
   sessionId: string | null;
   phase: Phase;
-  score: number;
+  /** 没有可判分题时为 null；只记录参与，不进入成绩。 */
+  score: number | null;
   bestScore: number;
   attempt: number;
   timeSpentSeconds: number;
@@ -527,8 +530,9 @@ export interface InteractionAttempt {
   answers: Record<string, unknown>;
   wrongItemIds: string[];
   pollAnswers: Record<string, string>;
-  /** 作答时的互动标题与计分口径；用于锁定历史成绩展示。 */
+  /** 作答时的互动标题；用于锁定历史成绩展示。 */
   setTitle?: string;
+  /** @deprecated 成绩已改为按题型判断，仅为兼容旧快照保留。 */
   countsTowardGrade?: boolean;
 }
 
@@ -688,11 +692,13 @@ export interface PlatformStoreApi {
   removeSessionRosterStudent(input: { sessionId: string; studentId: string; actorId?: string }): StoreResult<SessionRosterEntry[]>;
   updateSeriesSchedule(input: { seriesId: string; schedule: Array<{ sessionId: string; startAt: string; durationMinutes?: number }>; actorId?: string; reason?: string }): StoreResult<ClassSeries>;
   cancelSession(input: { sessionId: string; actorId: string; reason?: string }): StoreResult<ClassSession>;
-  saveInteractionSet(input: Partial<InteractionSet> & { setId?: string; lessonId: string; title: string; phase: Phase; items: InteractionItem[]; countsTowardGrade?: boolean; scope?: "library" | "lesson"; tags?: string[]; actorId?: string; publishNote?: string }): StoreResult<{ set: InteractionSet; version: InteractionVersion }>;
-  updateInteractionSetMeta(input: { setId: string; title?: string; phase?: Phase; tags?: string[]; countsTowardGrade?: boolean; actorId?: string }): StoreResult<{ set: InteractionSet }>;
+  saveInteractionSet(input: Partial<InteractionSet> & { setId?: string; lessonId: string; title: string; phase: Phase; items: InteractionItem[]; scope?: "library" | "lesson"; tags?: string[]; actorId?: string; publishNote?: string }): StoreResult<{ set: InteractionSet; version: InteractionVersion }>;
+  updateInteractionSetMeta(input: { setId: string; title?: string; phase?: Phase; tags?: string[]; actorId?: string }): StoreResult<{ set: InteractionSet }>;
+  deleteInteractionSet(input: { setId: string; actorId?: string }): StoreResult<InteractionSet>;
   copyInteractionSetToLesson(input: { setId: string; lessonId: string; phase?: Phase; sessionIds?: string[]; actorId?: string }): StoreResult<{ set: InteractionSet; version: InteractionVersion; source: InteractionSet }>;
   saveInteractionSetToLibrary(input: { setId: string; versionId?: string; actorId?: string }): StoreResult<{ set: InteractionSet; version: InteractionVersion; source: InteractionSet }>;
   rollbackInteractionVersion(input: { setId: string; versionId: string; actorId?: string }): StoreResult<{ set: InteractionSet; version: InteractionVersion }>;
+  reorderInteractionSets(input: { ids: string[]; actorId?: string }): StoreResult<InteractionSet[]>;
   assignInteractionSessions(input: { setId: string; sessionIds: string[]; actorId?: string }): StoreResult<InteractionSet>;
   excludeInteractionSession(input: { setId: string; sessionId: string; excluded: boolean; actorId?: string }): StoreResult<InteractionSet>;
   unassignInteractionSet(input: { setId: string; actorId?: string }): StoreResult<InteractionSet>;
@@ -717,7 +723,7 @@ export interface PlatformStoreApi {
   addMaterialVersion(input: { materialId: string; fileName: string; sizeLabel: string; actorId?: string }): StoreResult<Material>;
   setMaterialStatus(input: { materialId: string; status: "published" | "unpublished"; actorId?: string; reason?: string }): StoreResult<Material>;
   trackDownload(materialId: string): StoreResult<Material>;
-  recordAttempt(input: { setId: string; studentId: string; sessionId?: string | null; phase: Phase; answers: Record<string, unknown>; score: number; timeSpentSeconds: number; wrongItemIds?: string[]; pollAnswers?: Record<string, string> }): StoreResult<InteractionAttempt>;
+  recordAttempt(input: { setId: string; studentId: string; sessionId?: string | null; phase: Phase; answers: Record<string, unknown>; score: number | null; timeSpentSeconds: number; wrongItemIds?: string[]; pollAnswers?: Record<string, string> }): StoreResult<InteractionAttempt>;
   createAssessment(input: { classId: string; title: string; category: AssessmentCategory; maxScore?: number; assessedAt: string; actorId?: string }): StoreResult<GradeAssessment>;
   saveAssessmentScores(input: { assessmentId: string; entries: Array<{ studentId: string; score?: number | null; status: AssessmentScoreStatus }>; actorId?: string }): StoreResult<AssessmentScore[]>;
   archiveAssessment(input: { assessmentId: string; actorId?: string; reason?: string }): StoreResult<GradeAssessment>;

@@ -1,4 +1,5 @@
 import type { ClassSession, InteractionAttempt, InteractionItem, Material, Phase, PlatformState } from "../domain/types";
+import { isScorableInteractionType } from "./interactionTypes";
 import { getBookedCount, getCurrentInteractionVersion, getUser, sessionMaterials, setsForSession } from "./domain";
 
 /**
@@ -106,23 +107,6 @@ function materialProfile(material: Material) {
   return { action: "下载", rate: 0.68, minMinutes: 1, maxMinutes: 4 };
 }
 
-const scorableInteractionTypes = new Set<InteractionItem["type"]>([
-  "match",
-  "memory",
-  "choice",
-  "order",
-  "fill",
-  "picture",
-  "picture-match",
-  "situation",
-  "dialogue",
-  "pinyin-match",
-  "category",
-  "word-build",
-  "correction",
-  "listening"
-]);
-
 function latestAttemptByStudent(attempts: InteractionAttempt[]) {
   const map = new Map<string, InteractionAttempt>();
   attempts.forEach((attempt) => {
@@ -174,7 +158,7 @@ export function buildClassAnalytics(state: PlatformState, session: ClassSession)
       label: `Q${itemIndex + 1}`,
       prompt: item.prompt,
       type: item.type,
-      scorable: scorableInteractionTypes.has(item.type)
+      scorable: isScorableInteractionType(item.type)
     }));
     const attemptsByStudent = latestAttemptByStudent(
       sessionAttempts.filter(
@@ -208,9 +192,11 @@ export function buildClassAnalytics(state: PlatformState, session: ClassSession)
         scoredCount += 1;
         if (correct) correctCount += 1;
       });
-      const score = scoredCount
-        ? real?.score ?? Math.round((correctCount / scoredCount) * 100)
-        : real?.score ?? null;
+      const score = real
+        ? real.score
+        : scoredCount
+          ? Math.round((correctCount / scoredCount) * 100)
+          : null;
       return {
         ...member,
         done,
@@ -367,4 +353,308 @@ export function buildClassScopeAnalytics(state: PlatformState, sessions: ClassSe
     goodCount: rows.filter((row) => row.status === "good").length,
     weakCount: rows.filter((row) => row.status === "weak").length
   };
+}
+
+export type PerformanceScope = "session" | "class" | "school";
+export type SchoolPerformanceMetric = "participation" | "averageScore" | "correctRate" | "masteryRate";
+
+export interface PerformanceColumn {
+  id: string;
+  title: string;
+  /** 班级 / 校级矩阵里用来显示日期或阶段。 */
+  sublabel?: string;
+  phase?: Phase;
+  sessionId?: string;
+  /** 单课次矩阵里指向具体互动，点列头可以下钻。 */
+  rowId?: string;
+  metric?: SchoolPerformanceMetric;
+}
+
+export interface PerformanceCell {
+  /** 0-100；没有可判分作答时为空。 */
+  score: number | null;
+  answered: number;
+  correct: number;
+  done: boolean;
+}
+
+export interface PerformanceRow {
+  id: string;
+  name: string;
+  avatar: string;
+  level?: string;
+  className?: string;
+  average: number | null;
+  answeredCount: number;
+  missingCount: number;
+  cells: Record<string, PerformanceCell>;
+}
+
+export interface PerformanceMatrix {
+  scope: PerformanceScope;
+  columns: PerformanceColumn[];
+  rows: PerformanceRow[];
+}
+
+export interface LearningSummary {
+  /** 学生层面互动均分的均值；没有作答时为空。 */
+  averageScore: number | null;
+  correctRate: number | null;
+  correctTotal: number;
+  scoredTotal: number;
+  masteryRate: number | null;
+  masteryCount: number;
+  scoredStudents: number;
+  scorableInteractions: number;
+}
+
+function meanOf(values: number[]) {
+  if (values.length === 0) return null;
+  return Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10;
+}
+
+function isScore(value: number | null | undefined): value is number {
+  return typeof value === "number";
+}
+
+/** 课堂表现的「学习口径」：只用逐题对错，不掺直播间每轮固定 5 分。 */
+export function buildLearningSummary(analytics: ClassAnalytics): LearningSummary {
+  const scoresByStudent = new Map<string, number[]>();
+  let correctTotal = 0;
+  let scoredTotal = 0;
+  let scorableInteractions = 0;
+
+  analytics.rows.forEach((row) => {
+    if (row.kind !== "interaction") return;
+    if ((row.questions ?? []).some((question) => question.scorable)) scorableInteractions += 1;
+    row.students.forEach((student) => {
+      const scored = student.scoredCount ?? 0;
+      if (!scored || !isScore(student.score)) return;
+      const scores = scoresByStudent.get(student.studentId) ?? [];
+      scores.push(student.score);
+      scoresByStudent.set(student.studentId, scores);
+      correctTotal += student.correctCount ?? 0;
+      scoredTotal += scored;
+    });
+  });
+
+  const studentAverages = [...scoresByStudent.values()].map((scores) => meanOf(scores) ?? 0);
+  const masteryCount = studentAverages.filter((score) => score >= 85).length;
+
+  return {
+    averageScore: meanOf(studentAverages),
+    correctRate: scoredTotal ? Math.round((correctTotal / scoredTotal) * 100) : null,
+    correctTotal,
+    scoredTotal,
+    masteryRate: studentAverages.length ? Math.round((masteryCount / studentAverages.length) * 100) : null,
+    masteryCount,
+    scoredStudents: studentAverages.length,
+    scorableInteractions
+  };
+}
+
+function rosterMembers(analytics: ClassAnalytics) {
+  const map = new Map<string, { name: string; avatar: string; level: string; className: string }>();
+  analytics.rows.forEach((row) => {
+    row.students.forEach((student) => {
+      if (!map.has(student.studentId)) {
+        map.set(student.studentId, {
+          name: student.name,
+          avatar: student.avatar,
+          level: student.level,
+          className: student.className
+        });
+      }
+    });
+  });
+  return map;
+}
+
+/** 一个课次内，每名学生所有可判分互动的平均分。 */
+function sessionScoresByStudent(analytics: ClassAnalytics) {
+  const map = new Map<string, { scores: number[]; correct: number; scored: number; done: boolean }>();
+  analytics.rows.forEach((row) => {
+    if (row.kind !== "interaction") return;
+    row.students.forEach((student) => {
+      const entry = map.get(student.studentId) ?? { scores: [], correct: 0, scored: 0, done: false };
+      if ((student.scoredCount ?? 0) > 0 && isScore(student.score)) {
+        entry.scores.push(student.score);
+        entry.correct += student.correctCount ?? 0;
+        entry.scored += student.scoredCount ?? 0;
+      }
+      if (student.done) entry.done = true;
+      map.set(student.studentId, entry);
+    });
+  });
+  return map;
+}
+
+function sortPerformanceRows(rows: PerformanceRow[]) {
+  return rows.sort((a, b) => {
+    const left = a.average ?? Number.POSITIVE_INFINITY;
+    const right = b.average ?? Number.POSITIVE_INFINITY;
+    return left - right || a.name.localeCompare(b.name);
+  });
+}
+
+function buildSessionPerformanceMatrix(state: PlatformState, session: ClassSession): PerformanceMatrix {
+  const analytics = buildClassAnalytics(state, session);
+  const interactionRows = analytics.rows.filter(
+    (row) => row.kind === "interaction" && (row.questions ?? []).some((question) => question.scorable)
+  );
+  const columns: PerformanceColumn[] = interactionRows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    phase: row.phase,
+    rowId: row.id
+  }));
+  const roster = rosterMembers(analytics);
+  const rows: PerformanceRow[] = [...roster.entries()].map(([studentId, member]) => {
+    const cells: Record<string, PerformanceCell> = {};
+    const scores: number[] = [];
+    let missingCount = 0;
+    interactionRows.forEach((row) => {
+      const student = row.students.find((item) => item.studentId === studentId);
+      const scored = student?.scoredCount ?? 0;
+      const score = scored > 0 && isScore(student?.score) ? student.score : null;
+      cells[row.id] = {
+        score,
+        answered: scored,
+        correct: student?.correctCount ?? 0,
+        done: Boolean(student?.done)
+      };
+      if (score !== null) scores.push(score);
+      if (!student?.done) missingCount += 1;
+    });
+    return {
+      id: studentId,
+      name: member.name,
+      avatar: member.avatar,
+      level: member.level,
+      className: member.className,
+      average: meanOf(scores),
+      answeredCount: scores.length,
+      missingCount,
+      cells
+    };
+  });
+  return { scope: "session", columns, rows: sortPerformanceRows(rows) };
+}
+
+function buildClassPerformanceMatrix(state: PlatformState, sessions: ClassSession[]): PerformanceMatrix {
+  const ordered = [...sessions].sort(
+    (a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime()
+  );
+  const columns: PerformanceColumn[] = ordered.map((session) => ({
+    id: session.id,
+    title: session.title,
+    sublabel: session.startAt,
+    sessionId: session.id
+  }));
+  const entries = new Map<string, {
+    name: string;
+    avatar: string;
+    level: string;
+    className: string;
+    sessionScores: number[];
+    cells: Record<string, PerformanceCell>;
+    missingCount: number;
+  }>();
+
+  ordered.forEach((session) => {
+    const analytics = buildClassAnalytics(state, session);
+    const scoresByStudent = sessionScoresByStudent(analytics);
+    rosterMembers(analytics).forEach((member, studentId) => {
+      const entry = entries.get(studentId) ?? {
+        ...member,
+        sessionScores: [],
+        cells: {},
+        missingCount: 0
+      };
+      const result = scoresByStudent.get(studentId);
+      const score = result && result.scores.length > 0 ? meanOf(result.scores) : null;
+      entry.cells[session.id] = {
+        score,
+        answered: result?.scored ?? 0,
+        correct: result?.correct ?? 0,
+        done: Boolean(result?.done)
+      };
+      if (score !== null) entry.sessionScores.push(score);
+      if (!result?.done) entry.missingCount += 1;
+      entries.set(studentId, entry);
+    });
+  });
+
+  const rows: PerformanceRow[] = [...entries.entries()].map(([studentId, entry]) => ({
+    id: studentId,
+    name: entry.name,
+    avatar: entry.avatar,
+    level: entry.level,
+    className: entry.className,
+    average: meanOf(entry.sessionScores),
+    answeredCount: entry.sessionScores.length,
+    missingCount: entry.missingCount,
+    cells: entry.cells
+  }));
+  return { scope: "class", columns, rows: sortPerformanceRows(rows) };
+}
+
+function buildSchoolPerformanceMatrix(state: PlatformState, sessions: ClassSession[]): PerformanceMatrix {
+  const groups = new Map<string, { name: string; sessions: ClassSession[] }>();
+  sessions.forEach((session) => {
+    const key = session.classId || session.className;
+    const group = groups.get(key) ?? { name: session.className, sessions: [] };
+    group.sessions.push(session);
+    groups.set(key, group);
+  });
+
+  const columns: PerformanceColumn[] = [
+    { id: "participation", title: "", metric: "participation" },
+    { id: "averageScore", title: "", metric: "averageScore" },
+    { id: "correctRate", title: "", metric: "correctRate" },
+    { id: "masteryRate", title: "", metric: "masteryRate" }
+  ];
+
+  const rows: PerformanceRow[] = [];
+  groups.forEach((group, classId) => {
+    const analytics = buildClassScopeAnalytics(state, group.sessions);
+    if (!analytics) return;
+    const summary = buildLearningSummary(analytics);
+    const participationRate = analytics.rosterSize
+      ? Math.round((analytics.reachedStudents / analytics.rosterSize) * 100)
+      : 0;
+    rows.push({
+      id: classId,
+      name: group.name,
+      avatar: group.name.slice(0, 1),
+      average: summary.averageScore,
+      answeredCount: summary.scoredStudents,
+      missingCount: 0,
+      cells: {
+        participation: { score: participationRate, answered: analytics.rosterSize, correct: 0, done: true },
+        averageScore: { score: summary.averageScore, answered: summary.scoredStudents, correct: 0, done: true },
+        correctRate: { score: summary.correctRate, answered: summary.scoredStudents, correct: 0, done: true },
+        masteryRate: { score: summary.masteryRate, answered: summary.masteryCount, correct: 0, done: true }
+      }
+    });
+  });
+
+  return { scope: "school", columns, rows: sortPerformanceRows(rows) };
+}
+
+/**
+ * 课堂表现矩阵：
+ * - 单课次：学生 × 互动，格子是该次互动的答题得分；
+ * - 班级汇总：学生 × 课次，格子是该课次的互动均分；
+ * - 全校汇总：班级 × 四项学习指标，避免几百名学生挤在一起。
+ */
+export function buildPerformanceMatrix(
+  state: PlatformState,
+  sessions: ClassSession[],
+  scope: PerformanceScope
+): PerformanceMatrix {
+  if (sessions.length === 0) return { scope, columns: [], rows: [] };
+  if (scope === "school") return buildSchoolPerformanceMatrix(state, sessions);
+  if (scope === "class") return buildClassPerformanceMatrix(state, sessions);
+  return buildSessionPerformanceMatrix(state, sessions[0]);
 }

@@ -239,7 +239,6 @@ export function setsForSession(state: PlatformState, session: ClassSession) {
           ...set,
           title: entry.title ?? set.title,
           phase: entry.phase,
-          countsTowardGrade: entry.countsTowardGrade ?? set.countsTowardGrade,
           currentVersionId: entry.versionId
         } : null;
       })
@@ -266,7 +265,6 @@ export function lessonContent(
           ...set,
           title: entry.title ?? set.title,
           phase: entry.phase,
-          countsTowardGrade: entry.countsTowardGrade ?? set.countsTowardGrade,
           currentVersionId: entry.versionId
         } : null;
       })
@@ -440,7 +438,7 @@ export function teacherMetrics(state: PlatformState, teacherId: string) {
     booked,
     capacity,
     fillRate: capacity ? (booked / capacity) * 100 : 0,
-    averageScore: average(attempts.map((attempt) => attempt.score)),
+    averageScore: average(attempts.map((attempt) => attempt.score).filter((score): score is number => typeof score === "number")),
     completionRate: setIds.size ? Math.min(100, (attempts.length / Math.max(1, booked * setIds.size)) * 100) : 0
   };
 }
@@ -481,7 +479,7 @@ export function studentMetrics(state: PlatformState, studentId: string) {
     past,
     attempts,
     completedSetIds,
-    averageScore: average(attempts.map((attempt) => attempt.score)),
+    averageScore: average(attempts.map((attempt) => attempt.score).filter((score): score is number => typeof score === "number")),
     totalStudyMinutes: Math.round(attempts.reduce((sum, attempt) => sum + attempt.timeSpentSeconds, 0) / 60)
   };
 }

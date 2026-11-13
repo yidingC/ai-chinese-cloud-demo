@@ -699,8 +699,8 @@
     ];
 
 
-    // ---- 单题素材库：题型 × 主题 × 难度 ----
-    // 学生端 18 种题型全部入库：14 个主题 × 18 种题型 × 3 个难度。
+    // ---- 单题素材库：题型 × 主题 ----
+    // 学生端 18 种题型全部入库：14 个主题 × 18 种题型，每个组合一张标准模板。
     // 每个主题除词表外还带一套素材（排序句 / 填空 / 情景 / 对话 / 改错 / 归类 / 看图说话 / 开放问答），
     // 18 种题型都从同一套素材生成，老师换题型时不用重写内容。
     const templateTopics = [
@@ -1536,7 +1536,7 @@
       { id: `${templateId}-score-2`, label: "流利度", stars: 3 },
       { id: `${templateId}-score-3`, label: "声调", stars: 3 }
     ];
-    /** 词表按难度取前 n 个；选项顺序按难度轮转，避免永远正确答案排第一。 */
+    /** 词表取前 n 个；选项顺序轮转，避免永远正确答案排第一。 */
     function rotateOptions(entries, offset) {
       if (entries.length === 0) return entries;
       const step = offset % entries.length;
@@ -1579,19 +1579,18 @@
 
     /** 每种题型从主题素材生成一道题；返回 { summary, item }。 */
     function buildTemplateContent(templateId, type, topic, level) {
-      const levelLabel = level.label;
       const itemBase = {
         id: templateItemId(templateId),
         type,
         prompt: "请完成下面题目。",
-        explanation: `来自模板库：${topic.label} · ${levelLabel}`
+        explanation: `来自模板库：${topic.label}`
       };
       const wordCount = level.size;
 
       if (type === "match" || type === "memory") {
         const words = topic.words.slice(0, wordCount);
         return {
-          summary: `${levelLabel}难度 · ${words.length} 组「${topic.label}」中文—印尼语配对。`,
+          summary: `${words.length} 组「${topic.label}」中文—印尼语配对。`,
           item: {
             ...itemBase,
             prompt: type === "match" ? `把${topic.label}的中文和印尼语配对。` : `翻开卡片，找到${topic.label}的配对。`,
@@ -1604,7 +1603,7 @@
         const detail = meaningChoices(templateId, topic, wordCount, level.size - 3);
         const { target: choiceTarget, ...choiceFields } = detail;
         return {
-          summary: `${levelLabel}难度 · 选词义：${choiceTarget[0]} → 印尼语，${wordCount} 个选项。`,
+          summary: `选词义：${choiceTarget[0]} → 印尼语，${wordCount} 个选项。`,
           item: { ...itemBase, ...choiceFields, multiple: false }
         };
       }
@@ -1612,7 +1611,7 @@
         const source = level.id === "advanced" ? topic.orderAdvanced : topic.order;
         const parts = source.split(" ");
         return {
-          summary: `${levelLabel}难度 · 把 ${parts.length} 个词块排成「${source.replace(/ /g, "")}」。`,
+          summary: `把 ${parts.length} 个词块排成「${source.replace(/ /g, "")}」。`,
           item: {
             ...itemBase,
             prompt: "点选词块，把它们排成通顺的一句话。",
@@ -1625,7 +1624,7 @@
       if (type === "fill") {
         const blankCount = topic.fill.answers.length;
         return {
-          summary: `${levelLabel}难度 · 填空：${topic.fill.sentence.replace(/____/g, "（　）")}`,
+          summary: `填空：${topic.fill.sentence.replace(/____/g, "（　）")}`,
           item: {
             ...itemBase,
             prompt: "填写缺失的词语。",
@@ -1637,7 +1636,7 @@
       }
       if (type === "poll") {
         return {
-          summary: `${levelLabel}难度 · 课堂投票：${topic.poll}`,
+          summary: `课堂投票：${topic.poll}`,
           item: {
             ...itemBase,
             prompt: topic.poll,
@@ -1649,7 +1648,7 @@
       if (type === "picture") {
         const detail = pickOne(templateId, topic, wordCount, level.size - 3, true);
         return {
-          summary: `${levelLabel}难度 · 看图选词：${detail.target[0]}（${detail.target[2]}），${wordCount} 个选项。`,
+          summary: `看图选词：${detail.target[0]}（${detail.target[2]}），${wordCount} 个选项。`,
           item: {
             ...itemBase,
             prompt: "看图片，选出正确的词语。",
@@ -1663,7 +1662,7 @@
       if (type === "picture-match") {
         const words = topic.words.slice(0, wordCount);
         return {
-          summary: `${levelLabel}难度 · ${words.length} 张图卡与词语配对，带拼音。`,
+          summary: `${words.length} 张图卡与词语配对，带拼音。`,
           item: {
             ...itemBase,
             prompt: "把图片和词语配成对。",
@@ -1680,7 +1679,7 @@
       }
       if (type === "situation") {
         return {
-          summary: `${levelLabel}难度 · 情景：${topic.scene.zh}`,
+          summary: `情景：${topic.scene.zh}`,
           item: {
             ...itemBase,
             prompt: "看场景，选出这个场合里最得体的说法。",
@@ -1699,7 +1698,7 @@
       }
       if (type === "dialogue") {
         return {
-          summary: `${levelLabel}难度 · 接住上一句：${topic.dialogue.them}`,
+          summary: `接住上一句：${topic.dialogue.them}`,
           item: {
             ...itemBase,
             prompt: "看上一句，选出合适的下一句。",
@@ -1721,7 +1720,7 @@
         const wordOptions = picked.map((word) => word[0]);
         const meaningOptions = picked.map((word) => word[2]);
         return {
-          summary: `${levelLabel}难度 · ${picked.length} 组拼音 → 汉字 → 印尼语含义。`,
+          summary: `${picked.length} 组拼音 → 汉字 → 印尼语含义。`,
           item: {
             ...itemBase,
             prompt: "看拼音，先选汉字，再选意思。",
@@ -1751,7 +1750,7 @@
           group: `${templateId}-group-${word[2]}`
         }));
         return {
-          summary: `${levelLabel}难度 · 把 ${words.length} 个词分进「${groups[0].name}」和「${groups[1].name}」。`,
+          summary: `把 ${words.length} 个词分进「${groups[0].name}」和「${groups[1].name}」。`,
           item: {
             ...itemBase,
             prompt: "把下面的词放到对应的类别里。",
@@ -1771,7 +1770,7 @@
           });
         });
         return {
-          summary: `${levelLabel}难度 · 用字块拼出「${entry.word}」（${entry.meaning}）。`,
+          summary: `用字块拼出「${entry.word}」（${entry.meaning}）。`,
           item: {
             ...itemBase,
             prompt: "点字块，把词语拼进空格里。",
@@ -1792,7 +1791,7 @@
           ...(index === topic.correction.wrong ? { wrong: true } : {})
         }));
         return {
-          summary: `${levelLabel}难度 · 找出句子里用错的词，改成「${topic.correction.fix}」。`,
+          summary: `找出句子里用错的词，改成「${topic.correction.fix}」。`,
           item: {
             ...itemBase,
             prompt: "下面这句话里有一个词用错了，点出来。",
@@ -1810,7 +1809,7 @@
           .filter((word) => word[0] !== target[0])
           .concat([target]);
         return {
-          summary: `${levelLabel}难度 · 听「${target[0]}」选出正确词语，${ordered.length} 个选项。`,
+          summary: `听「${target[0]}」选出正确词语，${ordered.length} 个选项。`,
           item: {
             ...itemBase,
             prompt: "听一听，选出你听到的内容。",
@@ -1832,7 +1831,7 @@
         const text = useAdvanced ? topic.advanced : level.id === "beginner" ? topic.words[0][0] : topic.sentence;
         const pinyin = useAdvanced ? topic.advancedPinyin : level.id === "beginner" ? topic.words[0][1] : topic.sentencePinyin;
         return {
-          summary: `${levelLabel}难度 · 跟读「${text}」`,
+          summary: `跟读「${text}」`,
           item: {
             ...itemBase,
             prompt: "听一遍，然后跟着读。",
@@ -1847,7 +1846,7 @@
       if (type === "picture-talk") {
         const twoSentences = level.id !== "beginner";
         return {
-          summary: `${levelLabel}难度 · 看图说话：${topic.talk.answer}`,
+          summary: `看图说话：${topic.talk.answer}`,
           item: {
             ...itemBase,
             prompt: twoSentences ? "看这张图，用中文说两句话。" : "看这张图，用中文说一句话。",
@@ -1868,7 +1867,7 @@
         const sampleAnswerPinyin = useAdvanced ? topic.open.samplePinyin : topic.sentencePinyin;
         const words = topic.words.slice(0, wordCount);
         return {
-          summary: `${levelLabel}难度 · 开放问答：${prompt}`,
+          summary: `开放问答：${prompt}`,
           item: {
             ...itemBase,
             prompt,
@@ -1882,29 +1881,30 @@
         };
       }
       return {
-        summary: `${levelLabel}难度 · ${topic.label}`,
+        summary: topic.label,
         item: { ...itemBase, prompt: topic.poll, pollOptions: topic.pollOptions.map((text, index) => ({ id: `${templateId}-poll-${index}`, text })) }
       };
     }
 
+    const standardTemplateLevel =
+      templateLevels.find((level) => level.id === "intermediate") || templateLevels[0];
     const interactionTemplates = [];
     templateTopics.forEach((topic) => {
       Object.keys(templateTypeLabels).forEach((type) => {
-        templateLevels.forEach((level) => {
-          const templateId = `${topic.id}-${type}-${level.id}`;
-          const content = buildTemplateContent(templateId, type, topic, level);
-          interactionTemplates.push({
-            id: templateId,
-            type,
-            title: `${topic.label} · ${templateTypeLabels[type]}`,
-            summary: content.summary,
-            topic: topic.label,
-            topicId: topic.id,
-            level: level.id,
-            language: "zh-id",
-            tags: [templateTypeLabels[type], topic.label, level.label, topic.emoji],
-            item: content.item
-          });
+        const level = standardTemplateLevel;
+        const templateId = `${topic.id}-${type}-${level.id}`;
+        const content = buildTemplateContent(templateId, type, topic, level);
+        interactionTemplates.push({
+          id: templateId,
+          type,
+          title: `${topic.label} · ${templateTypeLabels[type]}`,
+          summary: content.summary,
+          topic: topic.label,
+          topicId: topic.id,
+          level: level.id,
+          language: "zh-id",
+          tags: [templateTypeLabels[type], topic.label, topic.emoji],
+          item: content.item
         });
       });
     });
@@ -1963,22 +1963,21 @@
     const interactionRoundTemplates = [];
     templateTopics.forEach((topic) => {
       roundTemplateScenarios.forEach((scenario) => {
-        templateLevels.forEach((level) => {
-          interactionRoundTemplates.push({
-            id: `round-${topic.id}-${scenario.id}-${level.id}`,
-            title: `${topic.label} · ${scenario.label}`,
-            summary: `${level.label}难度 · ${level.size} 道题，${scenario.action}。`,
-            scenarioId: scenario.id,
-            phase: scenario.phase,
-            topic: topic.label,
-            topicId: topic.id,
-            level: level.id,
-            estimatedMinutes: scenario.minutes + Math.max(0, level.size - 3),
-            tags: [scenario.label, topic.label, level.label, topic.emoji],
-            itemTemplateIds: scenario.types
-              .slice(0, level.size)
-              .map((type) => `${topic.id}-${type}-${level.id}`)
-          });
+        const level = standardTemplateLevel;
+        interactionRoundTemplates.push({
+          id: `round-${topic.id}-${scenario.id}-${level.id}`,
+          title: `${topic.label} · ${scenario.label}`,
+          summary: `${level.size} 道题，${scenario.action}。`,
+          scenarioId: scenario.id,
+          phase: scenario.phase,
+          topic: topic.label,
+          topicId: topic.id,
+          level: level.id,
+          estimatedMinutes: scenario.minutes + Math.max(0, level.size - 3),
+          tags: [scenario.label, topic.label, topic.emoji],
+          itemTemplateIds: scenario.types
+            .slice(0, level.size)
+            .map((type) => `${topic.id}-${type}-${level.id}`)
         });
       });
     });
@@ -2127,10 +2126,6 @@
         updatedAt: iso(addDays(now, -1))
       }
     ];
-    interactionSets.forEach((set) => {
-      set.countsTowardGrade = !set.id.includes("poll") && !set.id.includes("voice");
-    });
-
     const interactionVersions = [
       {
         id: "ver-greetings-preview-1",

@@ -8,7 +8,6 @@ export interface InteractionSettingsValue {
   title: string;
   phase: Phase;
   tags: string[];
-  countsTowardGrade: boolean;
 }
 
 /** 互动壳层设置：低频配置与题目编辑分开，保存时不生成新的题目版本。 */
@@ -16,6 +15,7 @@ export function InteractionSetSettingsModal({
   open,
   set,
   initialValue,
+  destination = "library",
   onSubmit,
   teacherId,
   onClose
@@ -24,13 +24,17 @@ export function InteractionSetSettingsModal({
   set: InteractionSet | null;
   /** 新建互动时使用本地草稿，不直接写库。 */
   initialValue?: InteractionSettingsValue;
+  /** 新建内容最终保存到互动库，还是当前课堂。 */
+  destination?: "library" | "lesson";
   /** 提供时改为提交本地草稿；设置保存到互动库仍走默认逻辑。 */
   onSubmit?: (value: InteractionSettingsValue) => void;
   teacherId: string;
   onClose: () => void;
 }) {
   const { run } = usePlatformStore();
-  const [form, setForm] = useState({ title: "", phase: "live" as Phase, tags: "", countsTowardGrade: true });
+  const [form, setForm] = useState({ title: "", phase: "live" as Phase, tags: "" });
+  /** 已进入编辑器的本地草稿，设置只回写标题、阶段和标签。 */
+  const editingDraft = Boolean(onSubmit);
 
   useEffect(() => {
     if (!open) return;
@@ -38,16 +42,14 @@ export function InteractionSetSettingsModal({
       ? {
           title: set.title,
           phase: set.phase,
-          tags: set.tags ?? [],
-          countsTowardGrade: set.countsTowardGrade !== false
+          tags: set.tags ?? []
         }
       : initialValue;
     if (source) {
       setForm({
         title: source.title,
         phase: source.phase,
-        tags: source.tags.join("，"),
-        countsTowardGrade: source.countsTowardGrade
+        tags: source.tags.join("，")
       });
     }
     // 每次打开时用当前来源重置；编辑过程中不跟随父级重渲染。
@@ -61,8 +63,7 @@ export function InteractionSetSettingsModal({
     const value: InteractionSettingsValue = {
       title: form.title.trim(),
       phase: form.phase,
-      tags: form.tags.split(/[，,]/u).map((tag) => tag.trim()).filter(Boolean),
-      countsTowardGrade: form.countsTowardGrade
+      tags: form.tags.split(/[，,]/u).map((tag) => tag.trim()).filter(Boolean)
     };
     if (onSubmit) {
       onSubmit(value);
@@ -76,7 +77,6 @@ export function InteractionSetSettingsModal({
           title: value.title,
           phase: value.phase,
           tags: value.tags,
-          countsTowardGrade: value.countsTowardGrade,
           actorId: teacherId
         }),
       "互动设置已更新"
@@ -87,16 +87,22 @@ export function InteractionSetSettingsModal({
   return (
     <Modal
       open={open}
-      title={set ? "互动设置" : "新建互动"}
+      title={set || editingDraft ? "互动设置" : destination === "lesson" ? "新建互动轮次" : "新建互动"}
       onClose={onClose}
       width="520px"
       stacked
       footer={
         <div className="modal-footer-split">
-          <span>{set ? "只更新互动信息，不改动题目内容" : "下一步进入题目编辑，发布后加入互动库"}</span>
+          <span>
+            {set || editingDraft
+              ? "只更新互动信息，不改动题目内容"
+              : destination === "lesson"
+                ? "下一步进入题目编辑，保存后加入本节课"
+                : "下一步进入题目编辑，发布后加入互动库"}
+          </span>
           <div>
             <Button variant="ghost" onClick={onClose}>取消</Button>
-            <Button onClick={save} disabled={!form.title.trim()}>{set ? "保存设置" : "下一步：编辑题目"}</Button>
+            <Button onClick={save} disabled={!form.title.trim()}>{set || editingDraft ? "保存设置" : "下一步：编辑题目"}</Button>
           </div>
         </div>
       }
@@ -110,7 +116,12 @@ export function InteractionSetSettingsModal({
             autoFocus
           />
         </Field>
-        <Field label="阶段" hint="决定这份互动在预习、课中或复习场景中被筛选。">
+        <Field
+          label="阶段"
+          hint={destination === "lesson"
+            ? "决定这一轮互动出现在本节课的哪个阶段。"
+            : "决定这份互动在预习、课中或复习场景中被筛选。"}
+        >
           <Select value={form.phase} onChange={(event) => setForm((current) => ({ ...current, phase: event.target.value as Phase }))}>
             <option value="preview">课前预习</option>
             <option value="live">课中互动</option>
@@ -124,21 +135,12 @@ export function InteractionSetSettingsModal({
             placeholder="餐厅，口语，复习"
           />
         </Field>
-        <label className="interaction-settings-toggle">
-          <input
-            type="checkbox"
-            checked={form.countsTowardGrade}
-            onChange={(event) => setForm((current) => ({ ...current, countsTowardGrade: event.target.checked }))}
-          />
-          <span>
-            <strong>计入学生成绩</strong>
-            <small>关闭后，这一轮互动仍可正常上课，但成绩不进入互动练习统计。</small>
-          </span>
-        </label>
         <p className="interaction-settings-note">
-          {set
-            ? "保存设置只更新标题、阶段、标签和计分，不会改动题目内容，也不会生成新的题目版本。"
-            : "这些信息先保存在本地草稿里；下一步编辑题目，点击发布后再正式加入互动库。"}
+          {set || editingDraft
+            ? "保存设置只更新标题、阶段和标签，不会改动题目内容，也不会生成新的题目版本。"
+            : destination === "lesson"
+              ? "这些信息先保存在本地草稿里；下一步编辑题目，保存后正式加入本节课。"
+              : "这些信息先保存在本地草稿里；下一步编辑题目，点击发布后再正式加入互动库。"}
         </p>
       </div>
     </Modal>

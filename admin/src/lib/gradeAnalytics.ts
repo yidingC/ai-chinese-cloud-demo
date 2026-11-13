@@ -3,10 +3,12 @@ import type {
   ClassEnrollment,
   GradeCategory,
   GradePolicy,
+  InteractionAttempt,
   InteractionType,
   Phase,
   PlatformState
 } from "../domain/types";
+import { isScorableInteractionType } from "./interactionTypes";
 
 export interface GradeDateRange {
   /** YYYY-MM-DD，按查看者时区解释。 */
@@ -424,14 +426,19 @@ function buildScopeStudentIds(state: PlatformState, scope: GradeScope, records: 
 
 function buildInteractionRecords(state: PlatformState, range: GradeDateRange, scope: GradeScope) {
   const { startAt, endAt } = gradeRangeBounds(range);
+  const hasNumericScore = (attempt: InteractionAttempt): attempt is InteractionAttempt & { score: number } =>
+    typeof attempt.score === "number";
+  const hasScorableQuestion = (attempt: InteractionAttempt) => {
+    const version = state.interactionVersions.find((item) => item.id === attempt.versionId);
+    if (!version) return true;
+    return version.items.some((item) => isScorableInteractionType(item.type));
+  };
   const attempts = state.interactionAttempts
     .filter((attempt) => scope.sessionId
       ? attempt.sessionId === scope.sessionId
       : isInRange(attempt.completedAt, startAt, endAt))
-    .filter((attempt) => {
-      if (typeof attempt.countsTowardGrade === "boolean") return attempt.countsTowardGrade;
-      return state.interactionSets.find((set) => set.id === attempt.setId)?.countsTowardGrade !== false;
-    })
+    .filter(hasNumericScore)
+    .filter(hasScorableQuestion)
     .filter((attempt) => {
       const context = sessionContext(state, attempt.sessionId);
       if (scope.studentId && attempt.studentId !== scope.studentId) return false;
@@ -441,7 +448,7 @@ function buildInteractionRecords(state: PlatformState, range: GradeDateRange, sc
       if (scope.teacherId && (context.teacherId !== scope.teacherId || !context.classId)) return false;
       return true;
     });
-  const bestBySet = new Map<string, typeof attempts[number]>();
+  const bestBySet = new Map<string, InteractionAttempt & { score: number }>();
   attempts.forEach((attempt) => {
     const key = `${attempt.studentId}:${attempt.setId}`;
     const current = bestBySet.get(key);
@@ -533,6 +540,21 @@ function categorySummary(records: GradeRecord[], policy: GradePolicy): Record<Gr
       category,
       average: average(values),
       count: values.length,
+      weight: policy.weights[category]
+    }];
+  })) as Record<GradeCategory, GradeCategorySummary>;
+}
+
+/** 班级均分：先得到每名学生的分类均分，再对学生等权平均。 */
+function aggregateCategorySummary(students: StudentGradeSummary[], policy: GradePolicy): Record<GradeCategory, GradeCategorySummary> {
+  return Object.fromEntries(categoryOrder.map((category) => {
+    const values = students
+      .map((student) => student.categories[category].average)
+      .filter((value): value is number => value !== null);
+    return [category, {
+      category,
+      average: average(values),
+      count: students.reduce((sum, student) => sum + student.categories[category].count, 0),
       weight: policy.weights[category]
     }];
   })) as Record<GradeCategory, GradeCategorySummary>;
@@ -691,7 +713,7 @@ export function buildGradeAnalytics(state: PlatformState, range: GradeDateRange,
     };
   }).sort((a, b) => (b.composite ?? -1) - (a.composite ?? -1) || a.name.localeCompare(b.name));
 
-  const categoryAverages = categorySummary(records, policy);
+  const categoryAverages = aggregateCategorySummary(students, policy);
   const pendingCount = records.filter((item) => item.status === "pending").length;
   const absentCount = records.filter((item) => item.status === "absent").length;
   const excusedCount = records.filter((item) => item.status === "excused").length;

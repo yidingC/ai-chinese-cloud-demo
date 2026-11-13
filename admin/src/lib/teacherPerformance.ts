@@ -71,7 +71,7 @@ function completionForTeacher(state: PlatformState, teacherId: string, schoolId:
   let expected = 0;
   const completed = new Set<string>();
   sessions.forEach((session) => {
-    const sets = setsForSession(state, session).filter((set) => set.status === "published" && set.countsTowardGrade !== false);
+    const sets = setsForSession(state, session).filter((set) => set.status === "published");
     const bookings = state.bookings.filter((booking) => booking.sessionId === session.id && booking.status === "booked");
     sets.forEach((set) => {
       bookings.forEach((booking) => {

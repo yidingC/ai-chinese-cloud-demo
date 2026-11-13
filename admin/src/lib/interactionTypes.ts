@@ -46,6 +46,18 @@ export const INTERACTION_TYPE_SHORT_LABELS: Record<InteractionType, string> = {
 
 export const INTERACTION_TYPES = Object.keys(INTERACTION_TYPE_LABELS) as InteractionType[];
 
+/** 只记录参与、不参与分数的题型。其余题型都必须有标准答案并正常计分。 */
+const PARTICIPATION_ONLY_TYPES = new Set<InteractionType>([
+  "poll",
+  "read-aloud",
+  "picture-talk",
+  "open-qa"
+]);
+
+export function isScorableInteractionType(type: InteractionType) {
+  return !PARTICIPATION_ONLY_TYPES.has(type);
+}
+
 export function interactionTypeLabel(type: InteractionType) {
   return INTERACTION_TYPE_LABELS[type] ?? type;
 }

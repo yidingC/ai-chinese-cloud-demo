@@ -44,6 +44,11 @@ describe("teacher live classroom demo", () => {
     expect(buildTeacherLiveDemo(state, "missing-teacher", undefined, Date.now())).toBeNull();
   });
 
+  it("does not fall back to another class when the requested session belongs to someone else", () => {
+    const state = platform.getState();
+    expect(buildTeacherLiveDemo(state, "teacher-berenice", "session-live", Date.now())).toBeNull();
+  });
+
   it("keeps a blank classroom overview when the session has no live content", () => {
     const state = platform.getState();
     const demo = buildTeacherLiveDemo(state, "teacher-berenice", "club-session-1", Date.now());

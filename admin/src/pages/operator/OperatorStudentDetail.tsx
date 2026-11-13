@@ -275,7 +275,9 @@ export function OperatorStudentDetail({
                 const set = state.interactionSets.find((item) => item.id === attempt.setId);
                 return (
                   <Card className="attempt-row" key={attempt.id}>
-                    <span className={`attempt-score ${attempt.score >= 80 ? "good" : "medium"}`}>{attempt.score}</span>
+                    <span className={`attempt-score ${typeof attempt.score === "number" && attempt.score >= 80 ? "good" : "medium"}`}>
+                      {attempt.score ?? "参与"}
+                    </span>
                     <div><strong>{set?.title}</strong><p>{formatDateTime(attempt.completedAt, state.ui.timeZone, state.ui.language)} · {attempt.timeSpentSeconds} 秒</p></div>
                     <Badge tone={attempt.wrongItemIds.length ? "orange" : "mint"}>{attempt.wrongItemIds.length} 个错题</Badge>
                   </Card>

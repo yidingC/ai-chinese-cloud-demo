@@ -13,12 +13,6 @@ import { PmNote } from "./PmNote";
 
 const phaseLabels: Record<Phase, string> = { preview: "课前预习", live: "课中互动", review: "课后复习" };
 
-function defaultCountsTowardGrade(items: InteractionItem[]) {
-  const onlyPoll = items.length > 0 && items.every((item) => item.type === "poll");
-  const hasPlaceholderSpeaking = items.some((item) => ["read-aloud", "picture-talk", "open-qa"].includes(item.type));
-  return !onlyPoll && !hasPlaceholderSpeaking;
-}
-
 /** 互动设计的创建 / 编辑弹窗：设计库与课堂设计页共用。 */
 export function InteractionSetEditorModal({
   open,
@@ -71,7 +65,6 @@ export function InteractionSetEditorModal({
   const [items, setItems] = useState<InteractionItem[]>([]);
   /** 当前高亮的题目：决定哪张题目卡片处于编辑态。 */
   const [activeItemId, setActiveItemId] = useState("");
-  const [countsTowardGrade, setCountsTowardGrade] = useState(true);
   const [assignmentScope, setAssignmentScope] = useState<"session" | "lesson">("session");
 
   useLayoutEffect(() => {
@@ -92,7 +85,6 @@ export function InteractionSetEditorModal({
         publishNote: ""
       });
       setItems(version ? structuredClone(version.items) : []);
-      setCountsTowardGrade(set.countsTowardGrade ?? defaultCountsTowardGrade(version?.items ?? []));
     } else {
       setForm({
         lessonId: libraryMode ? "" : (defaultLessonId ?? state.lessons[0]?.id ?? ""),
@@ -103,7 +95,6 @@ export function InteractionSetEditorModal({
       });
       const nextItems = presetItems ? structuredClone(presetItems) : [createInteractionItem("choice")];
       setItems(nextItems);
-      setCountsTowardGrade(defaultCountsTowardGrade(nextItems));
     }
     // 只在打开或切换编辑对象时重置表单。
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -126,7 +117,6 @@ export function InteractionSetEditorModal({
           tags: libraryMode
             ? form.tags.split(/[,，]/u).map((tag) => tag.trim()).filter(Boolean)
             : undefined,
-          countsTowardGrade,
           actorId: teacherId,
           publishNote: form.publishNote
         }),
@@ -261,10 +251,6 @@ export function InteractionSetEditorModal({
                     />
                   </Field>
                 )}
-                <label className="grade-count-toggle field-span-2">
-                  <input type="checkbox" checked={countsTowardGrade} onChange={(event) => setCountsTowardGrade(event.target.checked)} />
-                  <span><strong>计入学生成绩</strong><small>开启后，该互动的最高分进入“互动练习”分类；投票和语音占位互动默认关闭。</small></span>
-                </label>
                 <Field label="发布说明" className="field-span-2">
                   <PmNote kind="口径" note="发布说明写入版本记录，用于后续追踪改动，不展示给学生。">
                     <TextInput value={form.publishNote} onChange={(event) => setForm((value) => ({ ...value, publishNote: event.target.value }))} placeholder="介绍该互动的学习目的和内容吧" />

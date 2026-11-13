@@ -1,12 +1,13 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { BarChart3, CalendarClock, ChevronLeft, ChevronRight, Clock3, GraduationCap, MapPin, Search, TrendingUp, UserRound, UsersRound } from "lucide-react";
+import { CalendarClock, ChevronLeft, ChevronRight, Clock3, GraduationCap, MapPin, Search, TrendingUp, UserRound, UsersRound } from "lucide-react";
 import { usePlatformStore } from "../../store/usePlatformStore";
 import { currentUser, getTeacherSessions, getUser, sessionRuntimeStatus } from "../../lib/domain";
 import { getAcademicSchoolId, workspaceState } from "../../lib/academicScope";
-import { buildClassAnalytics, buildClassScopeAnalytics, type ClassAnalytics, type ClassContentRow, type ClassContentStudent, type ClassQuestionResult } from "../../lib/classAnalytics";
-import { formatDateTime, formatRange } from "../../lib/format";
+import { buildClassAnalytics, buildClassScopeAnalytics, buildLearningSummary, buildPerformanceMatrix, type ClassAnalytics, type ClassContentRow, type ClassContentStudent, type PerformanceColumn, type PerformanceMatrix, type PerformanceRow } from "../../lib/classAnalytics";
+import { formatDateTime, formatMonthDay, formatRange } from "../../lib/format";
+import { scoreTone } from "../../lib/gradeAnalytics";
 import { GradeAnalysisCards } from "../../components/GradeAnalyticsPanels";
 import { Avatar, Badge, Card, EmptyState, Modal, PageHeader, ProgressBar, Select, StatCard, TextInput } from "../../components/ui";
 import { PmNote } from "../../components/PmNote";
@@ -19,20 +20,16 @@ const statusMeta = {
   weak: { labelKey: "results.legendWeak", tone: "orange" as const }
 };
 
-const heatmapResultMeta = {
-  correct: { labelKey: "results.heatmapCorrect", symbol: "✓", className: "is-correct" },
-  wrong: { labelKey: "results.heatmapWrong", symbol: "✕", className: "is-wrong" },
-  unanswered: { labelKey: "results.heatmapUnanswered", symbol: "—", className: "is-unanswered" },
-  "not-scored": { labelKey: "results.heatmapNotScored", symbol: "·", className: "is-not-scored" }
-} as const;
-
 function questionAccuracy(students: ClassContentStudent[], questionId: string) {
   const results = students
     .map((student) => student.questionResults?.[questionId])
     .filter((result): result is "correct" | "wrong" => result === "correct" || result === "wrong");
-  return results.length
-    ? Math.round((results.filter((result) => result === "correct").length / results.length) * 100)
-    : null;
+  const correct = results.filter((result) => result === "correct").length;
+  return {
+    correct,
+    total: results.length,
+    rate: results.length ? Math.round((correct / results.length) * 100) : null
+  };
 }
 
 const phaseRank: Record<Phase, number> = { preview: 0, live: 1, review: 2 };
@@ -129,6 +126,129 @@ function buildStudentRows(analytics: ClassAnalytics): StudentDetailRow[] {
 }
 
 type ResultsVariant = "teacher" | "academic" | "operator" | "student";
+
+function performanceMetricLabel(t: (key: string, options?: Record<string, unknown>) => string, metric: PerformanceColumn["metric"]) {
+  if (metric === "participation") return t("results.heatmapMetricParticipation");
+  if (metric === "averageScore") return t("results.heatmapMetricAverage");
+  if (metric === "correctRate") return t("results.heatmapMetricCorrect");
+  return t("results.heatmapMetricMastery");
+}
+
+function PerformanceHeatmap({
+  matrix,
+  t,
+  rowLabel,
+  columnSubLabel,
+  onColumnClick,
+  onRowClick
+}: {
+  matrix: PerformanceMatrix;
+  t: (key: string, options?: Record<string, unknown>) => string;
+  rowLabel: (row: PerformanceRow) => string;
+  columnSubLabel: (column: PerformanceColumn) => string;
+  onColumnClick: (column: PerformanceColumn) => void;
+  onRowClick: (row: PerformanceRow) => void;
+}) {
+  const isSchool = matrix.scope === "school";
+  const showAverage = !isSchool && matrix.columns.length > 1;
+  const columnText = (column: PerformanceColumn) =>
+    isSchool && column.metric ? performanceMetricLabel(t, column.metric) : column.title;
+
+  if (matrix.columns.length === 0 || matrix.rows.length === 0) {
+    return <p className="performance-matrix-empty">{t("results.heatmapNoData")}</p>;
+  }
+
+  return (
+    <div className="performance-matrix-scroll">
+      <table className="performance-matrix" aria-label={t("results.heatmapTableAria")}>
+        <thead>
+          <tr>
+            <th scope="col" className="performance-matrix-name">
+              {isSchool ? t("results.heatmapClassCol") : t("results.heatmapStudentCol")}
+            </th>
+            {matrix.columns.map((column) => (
+              <th scope="col" key={column.id}>
+                {isSchool ? (
+                  <div className="performance-column-button is-static">
+                    <strong>{columnText(column)}</strong>
+                  </div>
+                ) : (
+                  <button type="button" className="performance-column-button" onClick={() => onColumnClick(column)}>
+                    <strong title={column.title}>{columnText(column)}</strong>
+                    <small>{columnSubLabel(column)}</small>
+                  </button>
+                )}
+              </th>
+            ))}
+            {showAverage && <th scope="col" className="performance-matrix-average">{t("results.heatmapAverageCol")}</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {matrix.rows.map((row) => (
+            <tr key={row.id}>
+              <th scope="row">
+                <button type="button" className="performance-row-button" onClick={() => onRowClick(row)}>
+                  {isSchool ? (
+                    <span className="performance-class-mark">{row.avatar}</span>
+                  ) : (
+                    <Avatar label={row.avatar} tone={(row.average ?? 0) >= 85 ? "purple" : "orange"} />
+                  )}
+                  <span>
+                    <strong>{rowLabel(row)}</strong>
+                    <small>
+                      {isSchool
+                        ? t("results.heatmapClassStudents", { count: row.answeredCount })
+                        : row.level}
+                    </small>
+                  </span>
+                </button>
+              </th>
+              {matrix.columns.map((column) => {
+                const cell = row.cells[column.id];
+                const score = cell?.score ?? null;
+                return (
+                  <td key={column.id}>
+                    <span
+                      className={`performance-cell tone-${scoreTone(score)}`}
+                      title={`${rowLabel(row)} · ${columnText(column)} · ${score === null ? t("results.heatmapUnansweredShort") : score}`}
+                    >
+                      {score === null ? "—" : `${score}${isSchool && column.metric !== "averageScore" ? "%" : ""}`}
+                    </span>
+                  </td>
+                );
+              })}
+              {showAverage && (
+                <td className="performance-matrix-average">
+                  <strong>{row.average ?? "—"}</strong>
+                  <small>{t("results.heatmapAnsweredOf", { answered: row.answeredCount, total: matrix.columns.length })}</small>
+                </td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr>
+            <th scope="row">{t("results.heatmapColumnAverage")}</th>
+            {matrix.columns.map((column) => {
+              const values = matrix.rows
+                .map((row) => row.cells[column.id]?.score)
+                .filter((value): value is number => typeof value === "number");
+              const avg = values.length
+                ? Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10
+                : null;
+              return (
+                <td key={column.id}>
+                  {avg === null ? "—" : `${avg}${isSchool && column.metric !== "averageScore" ? "%" : ""}`}
+                </td>
+              );
+            })}
+            {showAverage && <td />}
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
 
 export function ResultsWorkspace({
   state,
@@ -291,6 +411,30 @@ export function ResultsWorkspace({
   }, [allClassesSelected, classSessions, isSessionAggregate, schoolName, selectedClass, t]);
   const session = aggregateSession ?? displaySession;
   const studentRows = useMemo(() => (analytics ? buildStudentRows(analytics) : []), [analytics]);
+  const learning = useMemo(() => (analytics ? buildLearningSummary(analytics) : null), [analytics]);
+  const masteryTone = learning?.masteryRate === null || learning?.masteryRate === undefined
+    ? "neutral" as const
+    : learning.masteryRate >= 85
+      ? "mint" as const
+      : learning.masteryRate >= 60
+        ? "orange" as const
+        : "danger" as const;
+  const matrixScope = allClassesSelected
+    ? "school" as const
+    : isSessionAggregate && classSessions.length > 1
+      ? "class" as const
+      : "session" as const;
+  const matrix = useMemo(
+    () => buildPerformanceMatrix(state, scopedSessions, matrixScope),
+    [matrixScope, scopedSessions, state]
+  );
+  const highlightStudentId = student ? currentUser(state).id : undefined;
+  const visibleMatrix = useMemo(
+    () => (student && highlightStudentId
+      ? { ...matrix, rows: matrix.rows.filter((row) => row.id === highlightStudentId) }
+      : matrix),
+    [highlightStudentId, matrix, student]
+  );
   const phaseLabel = (phase: Phase) =>
     phase === "preview" ? t("results.phasePreviewShort") : phase === "live" ? t("results.phaseLiveShort") : t("results.phaseReviewShort");
   const phaseGroupLabel = (phase: Phase) =>
@@ -394,7 +538,6 @@ export function ResultsWorkspace({
         : ""
     : teacher?.name ?? "";
   const scopedClassCount = new Set(classSessions.map((item) => item.classId)).size;
-  const highlightStudentId = student ? currentUser(state).id : undefined;
   const displayName = (studentId: string, name: string) => (studentId === highlightStudentId ? `${name}${t("results.meSuffix")}` : name);
   const drilldownAction = drilldown ? actionText(drilldown.actionLabel) : "";
 
@@ -525,34 +668,98 @@ export function ResultsWorkspace({
               tone="blue"
               progress={participation}
             />
-            <PmNote block kind="口径" note="先计算每个互动或材料的完成率，再取全部内容平均值。">
+
+            <PmNote block kind="口径" note="互动均分只统计有可判分题目的互动；先算每名学生均分，再按学生等权平均。">
               <StatCard
-                label={t("results.averageRateLabel")}
-                value={`${analytics.averageRate}%`}
-                detail={t("results.averageRateDetail", { rows: analytics.rows.length, good: analytics.goodCount })}
+                label={t(allClassesSelected ? "results.averageScoreLabelSchool" : isSessionAggregate ? "results.averageScoreLabelClass" : "results.averageScoreLabelSession")}
+                value={learning?.averageScore ?? "--"}
+                detail={t("results.averageScoreDetail", { count: learning?.scorableInteractions ?? 0 })}
                 icon={<TrendingUp size={20} />}
-                tone="orange"
-                progress={analytics.averageRate}
+                tone="purple"
+                progress={learning?.averageScore ?? 0}
               />
             </PmNote>
-            <PmNote block kind="口径" note="平均完成用时只统计已完成该项内容的学生。">
+            <PmNote block kind="口径" note="掌握 = 学生在本范围的互动均分达到 85 分。">
+              <StatCard
+                label={t("results.masteryLabel")}
+                value={learning?.masteryRate === null || learning?.masteryRate === undefined ? "--" : `${learning.masteryRate}%`}
+                detail={t("results.masteryDetail", { count: learning?.masteryCount ?? 0, students: learning?.scoredStudents ?? 0 })}
+                icon={<GraduationCap size={20} />}
+                tone={masteryTone}
+                progress={learning?.masteryRate ?? 0}
+              />
+            </PmNote>
+            <PmNote block kind="口径" note="平均完成用时只统计已完成内容的学生；累计学习为本范围所有完成记录的总用时。">
               <StatCard
                 label={t("results.averageTimeLabel")}
                 value={analytics.totalActions ? t("results.minutes", { count: analytics.averageMinutes }) : "--"}
-                detail={t("results.averageTimeDetail")}
-                icon={<BarChart3 size={20} />}
-                tone="purple"
+                detail={t("results.timeCardDetail", { count: analytics.totalMinutes })}
+                icon={<Clock3 size={20} />}
+                tone="orange"
               />
             </PmNote>
-            <StatCard
-              label={t("results.totalStudyLabel")}
-              value={t("results.minutes", { count: analytics.totalMinutes })}
-              detail={t(allClassesSelected ? "results.schoolTotalStudyDetail" : "results.totalStudyDetail")}
-              icon={<Clock3 size={20} />}
-              tone="mint"
-            />
           </section>
 
+
+          <div className="performance-body">
+            <Card className="performance-matrix-card">
+              <div className="performance-matrix-head">
+                <div>
+                  <span className="eyebrow">Answer heatmap</span>
+                  <h3>{t("results.heatmapPageTitle")}</h3>
+                  <p className="muted-copy">
+                    {matrixScope === "school"
+                      ? t("results.heatmapHintSchool")
+                      : matrixScope === "class"
+                        ? t("results.heatmapHintClass")
+                        : t("results.heatmapHintSession")}
+                  </p>
+                </div>
+                {matrixScope !== "school" && (
+                  <div className="performance-legend" aria-label={t("results.heatmapLegend")}>
+                    <span><i className="performance-cell tone-mint mini" />{t("results.heatmapLegendMastery")}</span>
+                    <span><i className="performance-cell tone-blue mini" />{t("results.heatmapLegendGood")}</span>
+                    <span><i className="performance-cell tone-orange mini" />{t("results.heatmapLegendMid")}</span>
+                    <span><i className="performance-cell tone-danger mini" />{t("results.heatmapLegendLow")}</span>
+                  </div>
+                )}
+              </div>
+              <PerformanceHeatmap
+                matrix={visibleMatrix}
+                t={t}
+                rowLabel={(row) =>
+                  matrixScope === "school"
+                    ? classNameWithoutSchool(state, row.name)
+                    : displayName(row.id, row.name)
+                }
+                columnSubLabel={(column) =>
+                  column.phase
+                    ? phaseLabel(column.phase)
+                    : column.sublabel
+                      ? formatMonthDay(column.sublabel, state.ui.timeZone, state.ui.language)
+                      : ""
+                }
+                onColumnClick={(column) => {
+                  if (column.rowId) {
+                    const row = analytics.rows.find((item) => item.id === column.rowId);
+                    if (row) setDrilldown(row);
+                    return;
+                  }
+                  if (column.sessionId) setSelectedSessionId(column.sessionId);
+                }}
+                onRowClick={(row) => {
+                  if (matrixScope === "school") {
+                    setSelectedClassId(row.id);
+                    setSelectedSessionId(ALL_SESSIONS_SCOPE);
+                    setSessionQuery("");
+                    return;
+                  }
+                  const detail = studentRows.find((item) => item.studentId === row.id);
+                  if (detail) setStudentDetail(detail);
+                }}
+              />
+            </Card>
+          </div>
           <div className="section-heading-row">
             <div>
               <span className="eyebrow">Class completion</span>
@@ -742,102 +949,36 @@ export function ResultsWorkspace({
             </div>
 
             {drilldown.kind === "interaction" && (drilldown.questions?.length ?? 0) > 0 && (
-              <div className="modal-section answer-heatmap-section">
+              <div className="modal-section question-accuracy-section">
                 <div className="roster-modal-section-head">
                   <div>
-                    <h4>{t("results.heatmapTitle")}</h4>
-                    <p className="muted-copy">
-                      {t("results.heatmapSummary", {
-                        students: drilldown.students.length,
-                        answered: drilldown.answeredCount ?? 0,
-                        rate: drilldown.correctRate ?? "--"
-                      })}
-                    </p>
+                    <h4>{t("results.questionAccuracyTitle")}</h4>
+                    <p className="muted-copy">{t("results.questionAccuracyHint")}</p>
                   </div>
-                  <div className="answer-heatmap-legend" aria-label={t("results.heatmapLegend")}>
-                    {(["correct", "wrong", "unanswered", "not-scored"] as ClassQuestionResult[]).map((key) => {
-                      const meta = heatmapResultMeta[key];
-                      return (
-                        <span key={key}>
-                          <i className={`answer-heatmap-cell ${meta.className}`}>{meta.symbol}</i>
-                          {t(meta.labelKey)}
+                </div>
+                <div className="question-accuracy-list">
+                  {(drilldown.questions ?? []).map((question) => {
+                    const stats = questionAccuracy(drilldown.students, question.id);
+                    return (
+                      <article className="question-accuracy-row" key={question.id}>
+                        <span className="question-accuracy-label">{question.label}</span>
+                        <div className="question-accuracy-main">
+                          <strong>{question.prompt}</strong>
+                          <span className={`question-accuracy-bar ${!question.scorable ? "is-unscored" : ""}`}>
+                            <i style={{ width: `${question.scorable ? stats.rate ?? 0 : 0}%` }} />
+                          </span>
+                        </div>
+                        <span className="question-accuracy-value">
+                          <strong>{question.scorable ? (stats.rate === null ? "--" : `${stats.rate}%`) : "—"}</strong>
+                          <small>
+                            {question.scorable
+                              ? t("results.questionAccuracyValue", { correct: stats.correct, total: stats.total })
+                              : t("results.questionUnscored")}
+                          </small>
                         </span>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="answer-heatmap-scroll">
-                  <table className="answer-heatmap-table" aria-label={t("results.heatmapTableAria")}>
-                    <thead>
-                      <tr>
-                        <th scope="col">{t("results.heatmapStudent")}</th>
-                        {(drilldown.questions ?? []).map((question) => (
-                          <th scope="col" key={question.id} title={question.prompt}>
-                            {question.label}
-                            {!question.scorable && <small>{t("results.heatmapUnscoredShort")}</small>}
-                          </th>
-                        ))}
-                        <th scope="col">{t("results.heatmapScore")}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[...drilldown.students]
-                        .sort((a, b) => (b.score ?? -1) - (a.score ?? -1) || a.name.localeCompare(b.name))
-                        .map((student) => (
-                          <tr key={student.studentId}>
-                            <th scope="row">
-                              <strong>{displayName(student.studentId, student.name)}</strong>
-                              <small>{student.level}</small>
-                            </th>
-                            {(drilldown.questions ?? []).map((question) => {
-                              const result = student.questionResults?.[question.id] ?? "unanswered";
-                              const meta = heatmapResultMeta[result];
-                              return (
-                                <td key={question.id}>
-                                  <span
-                                    className={`answer-heatmap-cell ${meta.className}`}
-                                    title={`${question.label} · ${question.prompt} · ${t(meta.labelKey)}`}
-                                  >
-                                    {meta.symbol}
-                                  </span>
-                                </td>
-                              );
-                            })}
-                            <td className="answer-heatmap-score">
-                              <strong>{student.scoredCount ? student.score : "--"}</strong>
-                              <small>
-                                {student.done
-                                  ? student.scoredCount
-                                    ? `${student.correctCount}/${student.scoredCount}`
-                                    : t("results.heatmapNoScore")
-                                  : t("results.heatmapUnanswered")}
-                              </small>
-                            </td>
-                          </tr>
-                        ))}
-                    </tbody>
-                    <tfoot>
-                      <tr>
-                        <th scope="row">{t("results.metricCorrectRate")}</th>
-                        {(drilldown.questions ?? []).map((question) => {
-                          const accuracy = questionAccuracy(drilldown.students, question.id);
-                          return (
-                            <td key={question.id}>
-                              {question.scorable ? (accuracy === null ? "--" : `${accuracy}%`) : "—"}
-                            </td>
-                          );
-                        })}
-                        <td />
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-
-                <div className="answer-heatmap-questions">
-                  {(drilldown.questions ?? []).map((question) => (
-                    <span key={question.id}><b>{question.label}</b>{question.prompt}</span>
-                  ))}
+                      </article>
+                    );
+                  })}
                 </div>
               </div>
             )}

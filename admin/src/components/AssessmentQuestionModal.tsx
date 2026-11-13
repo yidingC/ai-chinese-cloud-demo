@@ -57,7 +57,7 @@ export function AssessmentQuestionModal({ assessmentId, onClose }: { assessmentI
             </div>
             <p>{classGroup?.name ?? "班级已归档"} · {formatDateTime(assessment.assessedAt, state.ui.timeZone, state.ui.language)} · 满分 {assessment.maxScore}</p>
           </div>
-          <div className="assessment-question-average"><strong>{average ?? "--"}</strong><small>班级均分</small></div>
+          <div className="assessment-question-average"><strong>{average ?? "--"}</strong><small>本次均分</small></div>
         </div>
 
         {questions.length ? (

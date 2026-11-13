@@ -224,7 +224,9 @@
 
     // 预制模板库以种子为准：老快照里的内置模板按 id 覆盖成最新内容，
     // 老师自己（未来）保存的模板不在种子里，原样保留。
-    const retiredTemplateIdPattern = /^tpl-(scene|b3)-/;
+    // 难度维度已从模板库下线：旧快照里按初级/高级生成的模板不再回灌。
+    const retiredTemplateIdPattern = /^tpl-(scene|b3)-|-(beginner|advanced)$/;
+    const retiredRoundTemplateIdPattern = /-(beginner|advanced)$/;
     const seededTemplateIds = new Set((seeded.interactionTemplates || []).map((template) => template.id));
     merged.interactionTemplates = [
       ...(seeded.interactionTemplates || []).map((template) => clone(template)),
@@ -235,7 +237,9 @@
     const seededRoundTemplateIds = new Set((seeded.interactionRoundTemplates || []).map((template) => template.id));
     merged.interactionRoundTemplates = [
       ...(seeded.interactionRoundTemplates || []).map((template) => clone(template)),
-      ...merged.interactionRoundTemplates.filter((template) => !seededRoundTemplateIds.has(template.id))
+      ...merged.interactionRoundTemplates.filter(
+        (template) => !seededRoundTemplateIds.has(template.id) && !retiredRoundTemplateIdPattern.test(template.id)
+      )
     ];
     // 互动集的「给学生的说明」字段已下线，老快照里残留的顺手清掉。
     merged.interactionSets.forEach((set) => {
@@ -691,16 +695,6 @@
       if (attempt) merged.interactionAttempts.push(clone(attempt));
     });
 
-    // 计分口径迁移：投票与语音占位互动默认不计入成绩，其他客观互动默认计入。
-    merged.interactionSets.forEach((set) => {
-      if (typeof set.countsTowardGrade === "boolean") return;
-      const items = merged.interactionVersions
-        .filter((version) => version.setId === set.id)
-        .flatMap((version) => version.items || []);
-      const onlyPoll = items.length > 0 && items.every((item) => item.type === "poll");
-      const hasPlaceholderSpeaking = items.some((item) => ["read-aloud", "picture-talk", "open-qa"].includes(item.type));
-      set.countsTowardGrade = !onlyPoll && !hasPlaceholderSpeaking;
-    });
     if (!merged.gradePolicies.length) {
       merged.gradePolicies.push({
         id: "grade-policy-default",
@@ -1958,8 +1952,7 @@
               setId: set.id,
               versionId: version.id,
               phase: set.phase,
-              title: set.title,
-              countsTowardGrade: set.countsTowardGrade !== false
+              title: set.title
             }
           : null;
       })
@@ -2226,9 +2219,10 @@
     }, "session");
   }
 
-  function saveInteractionSet({ setId = "", lessonId = "", title, phase, items, countsTowardGrade, scope, tags, actorId, publishNote = "" }) {
+  function saveInteractionSet({ setId = "", lessonId = "", title, phase, items, scope, tags, actorId, publishNote = "" }) {
     return save((draft) => {
       let set = setId ? draft.interactionSets.find((item) => item.id === setId) : null;
+      if (set && set.deletedAt) return result(false, null, "互动不存在", "NOT_FOUND");
       const nextScope = set
         ? (set.scope === "library" ? "library" : "lesson")
         : (scope === "library" ? "library" : "lesson");
@@ -2244,7 +2238,6 @@
             ? draft.interactionSets.filter((item) => item.scope === "library").length + 1
             : draft.interactionSets.filter((item) => item.scope !== "library" && item.lessonId === lessonId && item.phase === phase).length + 1,
           updatedAt: nowIso(),
-          countsTowardGrade: true,
           scope: nextScope,
           origin: nextScope === "library" ? "library" : "manual",
           tags: cleanTags(tags)
@@ -2274,8 +2267,7 @@
         status: "published",
         currentVersionId: version.id,
         updatedAt: nowIso(),
-        ...(Array.isArray(tags) ? { tags: cleanTags(tags) } : {}),
-        ...(typeof countsTowardGrade === "boolean" ? { countsTowardGrade } : {})
+        ...(Array.isArray(tags) ? { tags: cleanTags(tags) } : {})
       });
       addAudit(draft, {
         actorId: actorId || draft.currentUserId,
@@ -2290,18 +2282,17 @@
   }
 
   /** 只更新互动壳层属性；不改题目内容，也不生成新的内容版本。 */
-  function updateInteractionSetMeta({ setId, title, phase, tags, countsTowardGrade, actorId }) {
+  function updateInteractionSetMeta({ setId, title, phase, tags, actorId }) {
     return save((draft) => {
       const set = draft.interactionSets.find((item) => item.id === setId);
-      if (!set) return result(false, null, "互动不存在", "NOT_FOUND");
+      if (!set || set.deletedAt) return result(false, null, "互动不存在", "NOT_FOUND");
       const nextTitle = String(title ?? set.title).trim();
       if (!nextTitle) return result(false, null, "互动标题不能为空", "INVALID_INPUT");
       Object.assign(set, {
         title: nextTitle,
         phase: phase || set.phase,
         updatedAt: nowIso(),
-        ...(Array.isArray(tags) ? { tags: cleanTags(tags) } : {}),
-        ...(typeof countsTowardGrade === "boolean" ? { countsTowardGrade } : {})
+        ...(Array.isArray(tags) ? { tags: cleanTags(tags) } : {})
       });
       addAudit(draft, {
         actorId: actorId || draft.currentUserId,
@@ -2315,11 +2306,55 @@
     }, "interaction");
   }
 
+  /** 删除互动库母版；已复制到课次的副本是独立内容，继续保留。 */
+  function deleteInteractionSet({ setId, actorId }) {
+    return save((draft) => {
+      const set = draft.interactionSets.find((item) => item.id === setId);
+      if (!set || set.deletedAt) return result(false, null, "互动不存在", "NOT_FOUND");
+      if (set.scope !== "library") return result(false, null, "只有互动库内容可以删除", "INVALID_STATE");
+      set.deletedAt = nowIso();
+      set.updatedAt = set.deletedAt;
+      delete set.sessionIds;
+      delete set.excludedSessionIds;
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: "delete_interaction",
+        targetType: "interaction_set",
+        targetId: setId,
+        summary: `删除互动库内容“${set.title}”`
+      });
+      return result(true, set);
+    }, "interaction");
+  }
+
+  /** 只调整课堂轮次之间的显示顺序；不改题目内容，也不动互动库。 */
+  function reorderInteractionSets({ ids = [], actorId }) {
+    return save((draft) => {
+      const sets = ids
+        .map((id) => draft.interactionSets.find((item) => item.id === id))
+        .filter((item) => item && item.scope !== "library");
+      if (sets.length < 2) return result(false, null, "至少需要两轮互动才能排序", "INVALID_STATE");
+      const slots = sets.map((item) => Number(item.order) || 0).sort((a, b) => a - b);
+      sets.forEach((item, index) => {
+        item.order = slots[index];
+        item.updatedAt = nowIso();
+      });
+      addAudit(draft, {
+        actorId: actorId || draft.currentUserId,
+        action: "reorder_interactions",
+        targetType: "interaction_set",
+        targetId: sets[0].id,
+        summary: "调整课堂互动轮次顺序"
+      });
+      return result(true, sets);
+    }, "interaction");
+  }
+
   /** 从互动库复制一份独立副本到课节；之后两边各改各的，互不影响。 */
   function copyInteractionSetToLesson({ setId, lessonId, phase, sessionIds = [], actorId }) {
     return save((draft) => {
       const source = draft.interactionSets.find((item) => item.id === setId);
-      if (!source) return result(false, null, "互动不存在", "NOT_FOUND");
+      if (!source || source.deletedAt) return result(false, null, "互动不存在", "NOT_FOUND");
       const lesson = draft.lessons.find((item) => item.id === lessonId);
       if (!lesson) return result(false, null, "课节不存在", "NOT_FOUND");
       const sourceVersions = draft.interactionVersions.filter((version) => version.setId === source.id);
@@ -2339,7 +2374,6 @@
           (item) => item.scope !== "library" && item.lessonId === lessonId && item.phase === nextPhase
         ).length + 1,
         updatedAt: nowIso(),
-        countsTowardGrade: source.countsTowardGrade !== false,
         scope: "lesson",
         origin: "copied",
         sourceSetId: source.id,
@@ -2390,7 +2424,6 @@
         currentVersionId: "",
         order: draft.interactionSets.filter((item) => item.scope === "library").length + 1,
         updatedAt: nowIso(),
-        countsTowardGrade: source.countsTowardGrade !== false,
         scope: "library",
         origin: "library",
         tags: cleanTags([
@@ -3553,15 +3586,14 @@
         sessionId: sessionId || null,
         phase,
         score,
-        bestScore: Math.max(bestPrevious, score),
+        bestScore: score === null ? bestPrevious : Math.max(bestPrevious, score),
         attempt: previous.length + 1,
         timeSpentSeconds,
         completedAt: nowIso(),
         answers: answers || {},
         wrongItemIds,
         pollAnswers,
-        setTitle: snapshotEntry?.title || set.title,
-        countsTowardGrade: snapshotEntry?.countsTowardGrade ?? (set.countsTowardGrade !== false)
+        setTitle: snapshotEntry?.title || set.title
       };
       draft.interactionAttempts.push(attempt);
       if (score === 100) {
@@ -3724,9 +3756,11 @@
     resolveChangeRequest,
     saveInteractionSet,
     updateInteractionSetMeta,
+    deleteInteractionSet,
     copyInteractionSetToLesson,
     saveInteractionSetToLibrary,
     rollbackInteractionVersion,
+    reorderInteractionSets,
     assignInteractionSessions,
     excludeInteractionSession,
     unassignInteractionSet,

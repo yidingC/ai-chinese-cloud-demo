@@ -2,9 +2,9 @@ import { useMemo, useState } from "react";
 import { Search, Sparkles } from "lucide-react";
 import type { InteractionItem, InteractionTemplate, InteractionType } from "../domain/types";
 import { INTERACTION_TYPE_SHORT_LABELS } from "../lib/interactionTypes";
-import { orderTemplatesForBrowse, TEMPLATE_LEVEL_LABELS, templateLevelLabel } from "../lib/templateLibrary";
+import { orderTemplatesForBrowse } from "../lib/templateLibrary";
 import { TemplateTypeChips } from "./TemplateTypeChips";
-import { Badge, Button, Modal, TextInput } from "./ui";
+import { Button, Modal, TextInput } from "./ui";
 
 const typeLabels: Record<InteractionType, string> = INTERACTION_TYPE_SHORT_LABELS;
 
@@ -55,24 +55,22 @@ export function InteractionTemplatePicker({
 }) {
   const [query, setQuery] = useState("");
   const [type, setType] = useState<InteractionType | "all">("all");
-  const [level, setLevel] = useState<string>("all");
   const [visible, setVisible] = useState(12);
 
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase();
     const matched = templates.filter((template) => {
       const typeMatch = type === "all" || template.type === type;
-      const levelMatch = level === "all" || template.level === level;
       const queryMatch =
         !keyword ||
         template.title.toLowerCase().includes(keyword) ||
         template.topic.toLowerCase().includes(keyword) ||
         template.summary.toLowerCase().includes(keyword) ||
         template.tags.join(" ").toLowerCase().includes(keyword);
-      return typeMatch && levelMatch && queryMatch;
+      return typeMatch && queryMatch;
     });
     return orderTemplatesForBrowse(matched, type);
-  }, [templates, query, type, level]);
+  }, [templates, query, type]);
 
   return (
     <Modal
@@ -105,14 +103,6 @@ export function InteractionTemplatePicker({
             value={type}
             onChange={(next) => { setType(next); setVisible(12); }}
           />
-          <div className="template-chip-row muted">
-            <button className={level === "all" ? "active" : ""} onClick={() => { setLevel("all"); setVisible(12); }}>全部难度</button>
-            {Object.keys(TEMPLATE_LEVEL_LABELS).map((key) => (
-              <button key={key} className={level === key ? "active" : ""} onClick={() => { setLevel(key); setVisible(12); }}>
-                {TEMPLATE_LEVEL_LABELS[key as keyof typeof TEMPLATE_LEVEL_LABELS]}
-              </button>
-            ))}
-          </div>
         </div>
 
         <p className="muted-copy">筛选结果 {filtered.length} 套模板</p>
@@ -122,7 +112,6 @@ export function InteractionTemplatePicker({
             <article key={template.id} className="template-card">
               <div className="template-card-head">
                 <span className={`phase-badge phase-live`}>{typeLabels[template.type]}</span>
-                <Badge tone="neutral">{templateLevelLabel(template.level)}</Badge>
               </div>
               <strong>{template.title}</strong>
               <small>{template.summary}</small>

@@ -5,6 +5,8 @@ import {
   ArrowLeft,
   ArrowUp,
   CalendarClock,
+  Check,
+  ChevronDown,
   Eye,
   FileAudio,
   FileImage,
@@ -18,6 +20,7 @@ import {
   Presentation,
   Save,
   Search,
+  Shapes,
   SlidersHorizontal,
   Trash2,
   UploadCloud,
@@ -46,16 +49,21 @@ import type {
   InteractionItem,
   InteractionRoundScenario,
   InteractionSet,
-  InteractionTemplateLevel,
+  InteractionType,
   LessonMaterialRef,
   Material,
   Phase
 } from "../../domain/types";
 import { Avatar, Badge, Button, Card, EmptyState, Field, Modal, ProgressBar, Select, Tabs, TextInput } from "../../components/ui";
-import { InteractionSetEditorModal } from "../../components/InteractionSetEditorModal";
+import {
+  InteractionEditor,
+  changeInteractionItemType,
+  createInteractionItem,
+  INTERACTION_TYPE_OPTIONS
+} from "../../components/InteractionEditor";
+import { StudentPhonePreview } from "../../components/InteractionPlayer";
 import { PmNote } from "../../components/PmNote";
 import { interactionTypeLabel, interactionTypeShortLabel } from "../../lib/interactionTypes";
-import { templateLevelLabel } from "../../lib/templateLibrary";
 import { roundTemplateQuestionTemplates } from "../../lib/roundTemplates";
 import { InteractionRoundTemplateChips } from "../../components/InteractionRoundTemplateChips";
 import { templateToItem } from "../../components/InteractionTemplatePicker";
@@ -65,6 +73,11 @@ const PHASES: Array<{ phase: Phase; label: string; short: string; hint: string; 
   { phase: "live", label: "课中互动", short: "课中", hint: "课堂投屏使用，老师按节奏逐个开启。", open: "课堂中开放" },
   { phase: "review", label: "课后复习", short: "课后", hint: "课堂结束后延续练习与巩固。", open: "下课后开放" }
 ];
+
+type PendingDesignAction = {
+  label: string;
+  run: () => void;
+};
 
 function materialIcon(material: Material) {
   if (material.fileType === "pptx") return Presentation;
@@ -85,13 +98,33 @@ function sessionDateLabels(value: string, timeZone: string, language: string) {
 }
 
 /** 轮次名称直接在中栏编辑；失焦或回车保存，Esc 取消。 */
-function RoundTitleInput({ value, onFocus, onCommit }: { value: string; onFocus: () => void; onCommit: (title: string) => void }) {
+function RoundTitleInput({
+  value,
+  onFocus,
+  onCommit,
+  autoFocus = false,
+  onAutoFocus
+}: {
+  value: string;
+  onFocus: () => void;
+  onCommit: (title: string) => void;
+  autoFocus?: boolean;
+  onAutoFocus?: () => void;
+}) {
   const [draft, setDraft] = useState(value);
   const cancelledRef = useRef(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setDraft(value);
   }, [value]);
+
+  useEffect(() => {
+    if (!autoFocus) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+    onAutoFocus?.();
+  }, [autoFocus]);
 
   function commit() {
     if (cancelledRef.current) {
@@ -108,9 +141,11 @@ function RoundTitleInput({ value, onFocus, onCommit }: { value: string; onFocus:
 
   return (
     <input
+      ref={inputRef}
       className="design-round-title-input"
       value={draft}
       aria-label={`轮次名称：${value}`}
+      placeholder="轮次主题"
       title="点击直接修改轮次名称"
       spellCheck={false}
       onChange={(event) => setDraft(event.target.value)}
@@ -128,6 +163,47 @@ function RoundTitleInput({ value, onFocus, onCommit }: { value: string; onFocus:
         }
       }}
     />
+  );
+}
+
+const QUESTION_TYPE_GROUPS: Array<{ label: string; types: InteractionType[] }> = [
+  { label: "基础题型", types: ["choice", "picture", "match", "memory", "order", "fill", "poll"] },
+  { label: "句子与练习", types: ["situation", "dialogue", "pinyin-match", "category", "word-build", "correction", "listening"] },
+  { label: "口语表达", types: ["read-aloud", "picture-talk", "open-qa"] }
+];
+
+/** 加题时在右栏选择题型；选中后直接进入该题的编辑状态。 */
+function QuestionTypePicker({
+  onPick,
+  onCancel
+}: {
+  onPick: (type: InteractionType) => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="design-question-type-picker">
+      <div className="design-question-type-picker-head">
+        <p>选一种题型开始编辑</p>
+        <Button size="sm" variant="ghost" onClick={onCancel}>取消</Button>
+      </div>
+      {QUESTION_TYPE_GROUPS.map((group) => (
+        <section className="design-question-type-group" key={group.label}>
+          <h3>{group.label}</h3>
+          <div className="design-question-type-grid">
+            {group.types.map((type) => {
+              const option = INTERACTION_TYPE_OPTIONS.find((item) => item.type === type);
+              if (!option) return null;
+              return (
+                <button type="button" className="design-question-type-card" key={type} onClick={() => onPick(type)}>
+                  <strong>{option.label}</strong>
+                  <span>{option.hint}</span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      ))}
+    </div>
   );
 }
 
@@ -257,7 +333,12 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
   });
   const [selectedRoundId, setSelectedRoundId] = useState("");
   const [selectedItemId, setSelectedItemId] = useState("");
-  const [editorSeed, setEditorSeed] = useState<{ phase: Phase; set: InteractionSet | null } | null>(null);
+  const [addingToRoundId, setAddingToRoundId] = useState("");
+  const [focusRoundId, setFocusRoundId] = useState("");
+  const [questionDraft, setQuestionDraft] = useState<{ roundId: string; item: InteractionItem; dirty: boolean } | null>(null);
+  const [questionPreviewOpen, setQuestionPreviewOpen] = useState(false);
+  const [questionTypeOpen, setQuestionTypeOpen] = useState(false);
+  const questionTypeMenuRef = useRef<HTMLDivElement>(null);
   const [previewMaterial, setPreviewMaterial] = useState<Material | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploadForm, setUploadForm] = useState({ title: "", fileType: "pptx", fileName: "" });
@@ -266,29 +347,73 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
   const [materialScope, setMaterialScope] = useState<"session" | "lesson">("session");
   const [materialQuery, setMaterialQuery] = useState("");
   const [materialView, setMaterialView] = useState<"phase" | "all">("phase");
-  const [importPhase, setImportPhase] = useState<Phase | null>(null);
+  const [addExistingOpen, setAddExistingOpen] = useState(false);
+  const [addExistingTab, setAddExistingTab] = useState<"library" | "templates">("library");
   const [importSelection, setImportSelection] = useState<string[]>([]);
   const [templateQuery, setTemplateQuery] = useState("");
   const [templateScenario, setTemplateScenario] = useState<InteractionRoundScenario | "all">("all");
-  const [templateLevel, setTemplateLevel] = useState<InteractionTemplateLevel | "all">("all");
   const [templateVisible, setTemplateVisible] = useState(12);
   const [scopeMaterial, setScopeMaterial] = useState<Material | null>(null);
-  const [removeTarget, setRemoveTarget] = useState<
-    | { kind: "material"; ref: LessonMaterialRef; material: Material }
-    | { kind: "interaction"; set: InteractionSet }
-    | { kind: "question"; set: InteractionSet; item: InteractionItem }
-    | null
-  >(null);
+  const [removeTarget, setRemoveTarget] = useState<{ ref: LessonMaterialRef; material: Material } | null>(null);
   const [removeScope, setRemoveScope] = useState<"session" | "lesson">("session");
   const [designSaved, setDesignSaved] = useState(false);
-  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [pendingDesignAction, setPendingDesignAction] = useState<PendingDesignAction | null>(null);
   const [libraryQuery, setLibraryQuery] = useState("");
+
+  const questionDraftDirty = Boolean(questionDraft?.dirty);
 
   useEffect(() => {
     if (!designSaved) return;
     const timer = window.setTimeout(() => setDesignSaved(false), 1800);
     return () => window.clearTimeout(timer);
   }, [designSaved]);
+
+  useEffect(() => {
+    if (!questionDraftDirty) return;
+    function warnBeforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [questionDraftDirty]);
+
+  useEffect(() => {
+    if (!questionDraftDirty) return;
+    function interceptInternalLink(event: MouseEvent) {
+      if (event.defaultPrevented) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const anchor = target.closest<HTMLAnchorElement>("a[href]");
+      if (!anchor || anchor.target === "_blank" || anchor.hasAttribute("download")) return;
+      const href = anchor.getAttribute("href") ?? "";
+      if (!href.startsWith("#/") || href === window.location.hash) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setPendingDesignAction({
+        label: "离开当前设计页",
+        run: () => navigate(href.slice(1))
+      });
+    }
+    document.addEventListener("click", interceptInternalLink, true);
+    return () => document.removeEventListener("click", interceptInternalLink, true);
+  }, [navigate, questionDraftDirty]);
+
+  useEffect(() => {
+    if (!questionTypeOpen) return;
+    function closeOnOutside(event: PointerEvent) {
+      if (!questionTypeMenuRef.current?.contains(event.target as Node)) setQuestionTypeOpen(false);
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setQuestionTypeOpen(false);
+    }
+    document.addEventListener("pointerdown", closeOnOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [questionTypeOpen]);
 
   const sessionSets = useMemo(
     () =>
@@ -305,7 +430,7 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
   const librarySets = useMemo(
     () =>
       state.interactionSets
-        .filter((set) => set.scope === "library")
+        .filter((set) => set.scope === "library" && !set.deletedAt)
         .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
     [state.interactionSets]
   );
@@ -319,19 +444,25 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
     const keyword = templateQuery.trim().toLowerCase();
     return state.interactionRoundTemplates.filter((template) => {
       const scenarioMatch = templateScenario === "all" || template.scenarioId === templateScenario;
-      const levelMatch = templateLevel === "all" || template.level === templateLevel;
       const queryMatch =
         !keyword ||
         template.title.toLowerCase().includes(keyword) ||
         template.topic.toLowerCase().includes(keyword) ||
         template.summary.toLowerCase().includes(keyword) ||
         template.tags.join(" ").toLowerCase().includes(keyword);
-      return scenarioMatch && levelMatch && queryMatch;
+      return scenarioMatch && queryMatch;
     });
-  }, [state.interactionRoundTemplates, templateQuery, templateScenario, templateLevel]);
+  }, [state.interactionRoundTemplates, templateQuery, templateScenario]);
 
-  if (!session || !lesson) {
-    return <EmptyState title="课程不存在" description="请返回课表重新选择。" action={<Button onClick={() => navigate(backPath)}>{backLabel}</Button>} />;
+  const accessDenied = Boolean(!operatorView && session && session.teacherId !== user.id);
+  if (!session || !lesson || accessDenied) {
+    return (
+      <EmptyState
+        title={accessDenied ? "无权访问该课次" : "课程不存在"}
+        description={accessDenied ? "这个课次不属于当前老师，请返回自己的课表。" : "请返回课表重新选择。"}
+        action={<Button onClick={() => navigate(backPath)}>{backLabel}</Button>}
+      />
+    );
   }
 
   const booked = getBookedCount(state, session.id);
@@ -358,23 +489,159 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
   const selectedItems = selectedRound ? getCurrentInteractionVersion(state, selectedRound)?.items ?? [] : [];
   const selectedItem = selectedItems.find((item) => item.id === selectedItemId) ?? selectedItems[0] ?? null;
   const selectedItemIndex = selectedItem ? selectedItems.findIndex((item) => item.id === selectedItem.id) : -1;
+  const activeQuestionDraft = selectedRound && selectedItem
+    ? (questionDraft && questionDraft.roundId === selectedRound.id && questionDraft.item.id === selectedItem.id
+        ? questionDraft
+        : { roundId: selectedRound.id, item: selectedItem, dirty: false })
+    : null;
+  const previewQuestion = activeQuestionDraft?.item ?? selectedItem;
   const phaseWorkTitle = activePhase === "preview" ? "预习练习" : activePhase === "review" ? "复习练习" : "互动轮次";
 
+  function guardQuestionDraft(label: string, proceed: () => void) {
+    if (!questionDraft?.dirty) {
+      proceed();
+      return;
+    }
+    setPendingDesignAction({ label, run: proceed });
+  }
+
+  function cancelPendingDesignAction() {
+    setPendingDesignAction(null);
+  }
+
+  function resolvePendingDesignAction(save: boolean) {
+    const pending = pendingDesignAction;
+    if (!pending) return;
+    if (save && !commitQuestionDraft()) return;
+    setPendingDesignAction(null);
+    if (!save) setQuestionDraft(null);
+    pending.run();
+  }
+
   function changePhase(phase: Phase) {
-    setActivePhase(phase);
-    setSelectedRoundId("");
-    setSelectedItemId("");
+    if (phase === activePhase) return;
+    const phaseLabel = PHASES.find((item) => item.phase === phase)?.label ?? phase;
+    guardQuestionDraft(`切换到${phaseLabel}`, () => {
+      setActivePhase(phase);
+      setSelectedRoundId("");
+      setSelectedItemId("");
+      setAddingToRoundId("");
+      setQuestionDraft(null);
+      setQuestionPreviewOpen(false);
+      setQuestionTypeOpen(false);
+    });
   }
 
   function saveDesign() {
     if (readOnly) return;
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    if (!commitQuestionDraft()) return;
     setDesignSaved(true);
   }
 
-  function openEditor(phase: Phase, set: InteractionSet | null) {
+  /** 新建轮次直接落在中栏，随后由老师点「加题」选题型。 */
+  function createRound(phase: Phase) {
     if (readOnly) return;
-    setEditorSeed({ phase, set });
+    guardQuestionDraft("新建互动轮次", () => {
+      const result = run(
+        () => platform.saveInteractionSet({
+          lessonId: session!.lessonId,
+          title: "",
+          phase,
+          items: [],
+          actorId: user.id,
+          publishNote: "新增互动轮次"
+        }),
+        "已新增互动轮次"
+      );
+      const created = result.data?.set;
+      if (!result.ok || !created) return;
+      run(
+        () => platform.assignInteractionSessions({ setId: created.id, sessionIds: [session!.id], actorId: user.id })
+      );
+      setSelectedRoundId(created.id);
+      setSelectedItemId("");
+      setAddingToRoundId("");
+      setQuestionDraft(null);
+      setFocusRoundId(created.id);
+    });
+  }
+
+  function selectRound(set: InteractionSet) {
+    if (selectedRound?.id === set.id) return;
+    guardQuestionDraft(`切换到“${set.title || "未命名轮次"}”`, () => {
+      setSelectedRoundId(set.id);
+      setSelectedItemId("");
+      setAddingToRoundId("");
+      setQuestionDraft(null);
+      setQuestionPreviewOpen(false);
+      setQuestionTypeOpen(false);
+    });
+  }
+
+  function startAddQuestion(set: InteractionSet) {
+    if (readOnly) return;
+    guardQuestionDraft("开始添加题目", () => {
+      setSelectedRoundId(set.id);
+      setSelectedItemId("");
+      setAddingToRoundId(set.id);
+      setQuestionPreviewOpen(false);
+      setQuestionTypeOpen(false);
+    });
+  }
+
+  function selectQuestion(set: InteractionSet, item: InteractionItem) {
+    if (selectedRound?.id === set.id && selectedItem?.id === item.id) return;
+    guardQuestionDraft("切换题目", () => {
+      setSelectedRoundId(set.id);
+      setSelectedItemId(item.id);
+      setAddingToRoundId("");
+      setQuestionDraft(null);
+      setQuestionPreviewOpen(false);
+      setQuestionTypeOpen(false);
+    });
+  }
+
+  function addQuestion(set: InteractionSet, type: InteractionType) {
+    if (readOnly) return;
+    const item = createInteractionItem(type);
+    const items = [...(getCurrentInteractionVersion(state, set)?.items ?? []), item];
+    const result = saveRoundItems(set, items, "新增题目", "题目已添加");
+    if (!result.ok) return;
+    setSelectedRoundId(set.id);
+    setSelectedItemId(item.id);
+    setAddingToRoundId("");
+    setQuestionDraft({ roundId: set.id, item, dirty: false });
+  }
+
+  /** 题目编辑先落在本地草稿，点「保存本题」后才生成一个新版本。 */
+  function commitQuestionDraft(): boolean {
+    const draft = questionDraft;
+    if (!draft || !draft.dirty) return true;
+    const target = state.interactionSets.find((set) => set.id === draft.roundId);
+    if (!target) return false;
+    const persisted = getCurrentInteractionVersion(state, target)?.items ?? [];
+    const exists = persisted.some((item) => item.id === draft.item.id);
+    const nextItems = exists
+      ? persisted.map((item) => (item.id === draft.item.id ? draft.item : item))
+      : [...persisted, draft.item];
+    const result = saveRoundItems(target, nextItems, "编辑题目", "题目已保存");
+    if (!result.ok) return false;
+    setQuestionDraft((current) =>
+      current && current.item.id === draft.item.id ? { ...current, dirty: false } : current
+    );
+    return true;
+  }
+
+  /** 换题型保留公共内容，并等待老师手动保存。 */
+  function changeQuestionType(type: InteractionType) {
+    if (readOnly || !activeQuestionDraft || type === activeQuestionDraft.item.type) return;
+    setDesignSaved(false);
+    setQuestionDraft({
+      roundId: activeQuestionDraft.roundId,
+      item: changeInteractionItemType(activeQuestionDraft.item, type),
+      dirty: true
+    });
   }
 
   function saveRoundItems(set: InteractionSet, items: InteractionItem[], note: string, successMessage: string) {
@@ -386,7 +653,6 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
           title: set.title,
           phase: set.phase,
           items,
-          countsTowardGrade: set.countsTowardGrade,
           actorId: user.id,
           publishNote: note
         }),
@@ -405,11 +671,25 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
           title,
           phase: set.phase,
           items,
-          countsTowardGrade: set.countsTowardGrade,
           actorId: user.id,
           publishNote: "修改轮次名称"
         }),
       "轮次名称已更新"
+    );
+    if (result.ok) setSelectedRoundId(set.id);
+  }
+
+  /** 只调整轮次在本节课里的上下顺序，不复制内容。 */
+  function moveRound(set: InteractionSet, direction: -1 | 1) {
+    if (readOnly) return;
+    const index = currentSets.findIndex((item) => item.id === set.id);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= currentSets.length) return;
+    const next = [...currentSets];
+    [next[index], next[target]] = [next[target], next[index]];
+    const result = run(
+      () => platform.reorderInteractionSets({ ids: next.map((item) => item.id), actorId: user.id }),
+      "轮次顺序已更新"
     );
     if (result.ok) setSelectedRoundId(set.id);
   }
@@ -438,63 +718,69 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
     }
   }
 
-  function confirmRemove() {
+  /** 删除轮次：直接从该课节全部课次移除，保留互动库中的母版。 */
+  function deleteRound(set: InteractionSet) {
     if (readOnly) return;
-    if (!removeTarget) return;
-    if (removeTarget.kind === "question") {
-      const remainingItems = (getCurrentInteractionVersion(state, removeTarget.set)?.items ?? []).filter(
-        (item) => item.id !== removeTarget.item.id
-      );
-      const result = saveRoundItems(removeTarget.set, remainingItems, "删除题目", "题目已删除");
-      if (result.ok) {
-        setSelectedItemId(remainingItems[0]?.id ?? "");
-        setRemoveTarget(null);
-      }
-      return;
+    const result = run(
+      () => platform.unassignInteractionSet({ setId: set.id, actorId: user.id }),
+      "轮次已删除"
+    );
+    if (!result.ok) return;
+    if (selectedRoundId === set.id) {
+      setSelectedRoundId("");
+      setSelectedItemId("");
+      setQuestionDraft(null);
+      setQuestionPreviewOpen(false);
     }
+  }
+
+  /** 删除题目：直接写入当前轮次的新版本，不再弹确认框。 */
+  function deleteQuestion(set: InteractionSet, item: InteractionItem) {
+    if (readOnly) return;
+    const remainingItems = (getCurrentInteractionVersion(state, set)?.items ?? []).filter(
+      (current) => current.id !== item.id
+    );
+    const result = saveRoundItems(set, remainingItems, "删除题目", "题目已删除");
+    if (!result.ok) return;
+    setSelectedRoundId(set.id);
+    if (selectedItemId === item.id) {
+      setQuestionDraft(null);
+      setSelectedItemId(remainingItems[0]?.id ?? "");
+    }
+  }
+
+  function confirmRemoveMaterial() {
+    if (readOnly || !removeTarget) return;
+    const { ref, material } = removeTarget;
     if (removeScope === "lesson") {
-      if (removeTarget.kind === "interaction") {
-        run(
-          () => platform.unassignInteractionSet({ setId: removeTarget.set.id, actorId: user.id }),
-          "已从该课节全部课次移出，设计仍保留在互动设计库"
-        );
-      } else {
-        const { ref, material } = removeTarget;
-        run(
-          () => platform.detachMaterial({ materialId: material.id, lessonId: session!.lessonId, phase: ref.phase, actorId: user.id }),
-          "已从该课节全部课次移出该材料"
-        );
-      }
-    } else if (removeTarget.kind === "interaction") {
       run(
-        () => platform.excludeInteractionSession({ setId: removeTarget.set.id, sessionId: session!.id, excluded: true, actorId: user.id }),
-        "已从本次课移出，设计仍保留在互动设计库"
+        () => platform.detachMaterial({ materialId: material.id, lessonId: session!.lessonId, phase: ref.phase, actorId: user.id }),
+        "已从该课节全部课次移出该材料"
+      );
+    } else if (ref.sessionIds && ref.sessionIds.length === 1 && ref.sessionIds[0] === session!.id) {
+      // 只属于本节课的材料直接解除关联；课节共用的材料只从本节课移出。
+      run(
+        () => platform.detachMaterial({ materialId: material.id, lessonId: session!.lessonId, phase: ref.phase, actorId: user.id }),
+        "已移除该材料"
       );
     } else {
-      const { ref, material } = removeTarget;
-      // 只属于本节课的材料直接解除关联；课节共用的材料只从本节课移出。
-      if (ref.sessionIds && ref.sessionIds.length === 1 && ref.sessionIds[0] === session!.id) {
-        run(
-          () => platform.detachMaterial({ materialId: material.id, lessonId: session!.lessonId, phase: ref.phase, actorId: user.id }),
-          "已移除该材料"
-        );
-      } else {
-        run(
-          () => platform.excludeMaterialSession({ materialId: material.id, lessonId: session!.lessonId, phase: ref.phase, sessionId: session!.id, excluded: true, actorId: user.id }),
-          "已从本次课移出该材料"
-        );
-      }
+      run(
+        () => platform.excludeMaterialSession({ materialId: material.id, lessonId: session!.lessonId, phase: ref.phase, sessionId: session!.id, excluded: true, actorId: user.id }),
+        "已从本次课移出该材料"
+      );
     }
     setRemoveTarget(null);
   }
 
-  function openTemplateLibrary(phase: Phase) {
+  /** 互动库和模板库合并成一个入口，用弹窗里的两个标签页区分。 */
+  function openAddExisting(tab: "library" | "templates" = "library") {
     if (readOnly) return;
-    setImportPhase(phase);
+    setAddExistingTab(tab);
+    setAddExistingOpen(true);
     setImportSelection([]);
+    setLibraryQuery("");
     setTemplateQuery("");
     setTemplateScenario("all");
-    setTemplateLevel("all");
     setTemplateVisible(12);
   }
 
@@ -521,7 +807,7 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
         }),
       `已把“${set.title}”复制到本节课`
     );
-    if (result.ok) setLibraryOpen(false);
+    if (result.ok) setAddExistingOpen(false);
   }
 
   function confirmMaterials() {
@@ -581,7 +867,7 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
 
   /** 把选中的整轮模板复制成本节课的互动设计，并只配置到本节课。 */
   function confirmImport() {
-    if (!importPhase || importSelection.length === 0) return;
+    if (importSelection.length === 0) return;
     const createdIds: string[] = [];
     importSelection.forEach((templateId) => {
       const template = state.interactionRoundTemplates.find((item) => item.id === templateId);
@@ -591,7 +877,7 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
       const saved = platform.saveInteractionSet({
         lessonId: session!.lessonId,
         title: template.title,
-        phase: importPhase,
+        phase: activePhase,
         items,
         actorId: user.id,
         publishNote: `从互动模板库引入（${template.topic}）`
@@ -606,7 +892,7 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
       createdIds.length ? `已从互动模板库引入 ${createdIds.length} 个互动到本节课` : "引入未完成，请稍后重试",
       createdIds.length ? "success" : "error"
     );
-    setImportPhase(null);
+    setAddExistingOpen(false);
     setImportSelection([]);
   }
 
@@ -634,7 +920,12 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
   return (
     <>
       <div className="design-page-backbar">
-        <Button className="design-back-button" variant="secondary" size="sm" onClick={() => navigate(backPath)}>
+        <Button
+          className="design-back-button"
+          variant="secondary"
+          size="sm"
+          onClick={() => guardQuestionDraft(backLabel, () => navigate(backPath))}
+        >
           <ArrowLeft size={16} /> {backLabel}
         </Button>
       </div>
@@ -745,7 +1036,7 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
                     {!readOnly && (
                       <>
                         <Button size="sm" variant="ghost" onClick={() => setScopeMaterial(material)}><SlidersHorizontal size={15} /> 配置</Button>
-                        <Button size="sm" variant="ghost" className="danger-ghost" onClick={() => { setRemoveScope("session"); setRemoveTarget({ kind: "material", ref, material }); }}>
+                        <Button size="sm" variant="ghost" className="danger-ghost" onClick={() => { setRemoveScope("session"); setRemoveTarget({ ref, material }); }}>
                           移出
                         </Button>
                       </>
@@ -775,19 +1066,14 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
               </div>
               {!readOnly && (
                 <div className="design-panel-actions">
+                  <PmNote kind="流程" note="从我的互动库或公共模板库复制一份到本节课；修改副本不会影响原内容。">
+                    <Button variant="secondary" size="sm" onClick={() => openAddExisting("library")}>
+                      <LibraryBig size={15} /> 添加已有互动
+                    </Button>
+                  </PmNote>
                   <PmNote kind="流程" note="点击后创建新的互动轮次；保存发布后学生才能看到。">
-                    <Button size="sm" onClick={() => openEditor(activePhase, null)}>
+                    <Button size="sm" onClick={() => createRound(activePhase)}>
                       <Layers3 size={15} /> 新建互动轮次
-                    </Button>
-                  </PmNote>
-                  <PmNote kind="流程" note="从互动库复制一份到本节课；之后修改副本不会影响库里的母版。">
-                    <Button variant="secondary" size="sm" onClick={() => { setLibraryQuery(""); setLibraryOpen(true); }}>
-                      <LibraryBig size={15} /> 从互动库添加
-                    </Button>
-                  </PmNote>
-                  <PmNote kind="流程" note="模板会复制成一个新的轮次，只配置到本节课。">
-                    <Button variant="ghost" size="sm" onClick={() => openTemplateLibrary(activePhase)}>
-                      <LibraryBig size={15} /> 从模板库选用
                     </Button>
                   </PmNote>
                 </div>
@@ -808,7 +1094,7 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
                       <button
                         type="button"
                         className="design-round-select"
-                        onClick={() => { setSelectedRoundId(set.id); setSelectedItemId(""); }}
+                        onClick={() => selectRound(set)}
                         aria-label={`选择第 ${index + 1} 轮：${set.title}`}
                         aria-pressed={isSelected}
                       >
@@ -819,13 +1105,35 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
                       ) : (
                         <RoundTitleInput
                           value={set.title}
-                          onFocus={() => { setSelectedRoundId(set.id); setSelectedItemId(""); }}
+                          autoFocus={focusRoundId === set.id}
+                          onAutoFocus={() => setFocusRoundId("")}
+                          onFocus={() => selectRound(set)}
                           onCommit={(title) => renameRound(set, title)}
                         />
                       )}
                     </div>
                     {!readOnly && (
                       <div className="design-round-actions">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          aria-label={`上移轮次 ${set.title || `#${index + 1}`}`}
+                          title="上移轮次"
+                          disabled={index === 0}
+                          onClick={() => moveRound(set, -1)}
+                        >
+                          <ArrowUp size={14} />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          aria-label={`下移轮次 ${set.title || `#${index + 1}`}`}
+                          title="下移轮次"
+                          disabled={index === currentSets.length - 1}
+                          onClick={() => moveRound(set, 1)}
+                        >
+                          <ArrowDown size={14} />
+                        </Button>
                         <Button
                           size="icon"
                           variant="ghost"
@@ -839,9 +1147,9 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
                           size="icon"
                           variant="ghost"
                           className="danger-ghost"
-                          aria-label={`移出轮次 ${set.title}`}
-                          title="移出轮次"
-                          onClick={() => { setRemoveScope("session"); setRemoveTarget({ kind: "interaction", set }); }}
+                          aria-label={`删除轮次 ${set.title}`}
+                          title="删除轮次"
+                          onClick={() => deleteRound(set)}
                         >
                           <Trash2 size={14} />
                         </Button>
@@ -856,7 +1164,7 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
                           <button
                             type="button"
                             className="design-round-question-main"
-                            onClick={() => { setSelectedRoundId(set.id); setSelectedItemId(item.id); }}
+                            onClick={() => selectQuestion(set, item)}
                             aria-pressed={isItemSelected}
                           >
                             <span className="design-round-question-number">{itemIndex + 1}</span>
@@ -890,7 +1198,7 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
                                 className="design-row-icon is-danger"
                                 aria-label={`删除题目 ${item.prompt || itemIndex + 1}`}
                                 title="删除题目"
-                                onClick={() => setRemoveTarget({ kind: "question", set, item })}
+                                onClick={() => deleteQuestion(set, item)}
                               >
                                 <Trash2 size={12} />
                               </button>
@@ -901,7 +1209,7 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
                     })}
                     {items.length === 0 && <p className="design-round-question-empty">这一轮还没有题目</p>}
                     {!readOnly && (
-                      <button type="button" className="design-round-add-question" onClick={() => openEditor(set.phase, set)}>
+                      <button type="button" className="design-round-add-question" onClick={() => startAddQuestion(set)}>
                         ＋ 加题
                       </button>
                     )}
@@ -917,7 +1225,7 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
                 ) : (
                   <>
                     <p>先新建一个轮次，再往这一轮里加题；也可以从模板库复制一套现成互动。</p>
-                    <Button variant="soft" size="sm" onClick={() => openEditor(activePhase, null)}>
+                    <Button variant="soft" size="sm" onClick={() => createRound(activePhase)}>
                       <Layers3 size={15} /> 创建第一个轮次
                     </Button>
                   </>
@@ -935,8 +1243,71 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
           <div className="design-panel-head">
             <div>
               <span className="eyebrow">Question editor</span>
-              <h2>{readOnly ? "题目详情" : "题目编辑"}</h2>
+              <h2>{readOnly ? "题目详情" : addingToRoundId ? "选择题型" : "题目编辑"}</h2>
             </div>
+            {addingToRoundId !== selectedRound?.id && previewQuestion && (
+              <div className="design-question-editor-actions">
+                {readOnly || !activeQuestionDraft ? (
+                  <Badge tone="purple">{interactionTypeLabel(previewQuestion.type)}</Badge>
+                ) : (
+                  <div className="design-question-type-menu" ref={questionTypeMenuRef}>
+                    <button
+                      type="button"
+                      className={`design-question-type-trigger ${questionTypeOpen ? "is-open" : ""}`}
+                      aria-label="更换题型"
+                      aria-haspopup="listbox"
+                      aria-expanded={questionTypeOpen}
+                      title="更换题型，已有公共内容会尽量保留"
+                      onClick={() => setQuestionTypeOpen((value) => !value)}
+                    >
+                      <Shapes size={14} />
+                      <span>{interactionTypeLabel(activeQuestionDraft.item.type)}</span>
+                      <ChevronDown size={13} className="design-question-type-chevron" />
+                    </button>
+                    {questionTypeOpen && (
+                      <div className="design-question-type-popover" role="listbox" aria-label="更换题型">
+                        {QUESTION_TYPE_GROUPS.map((group) => (
+                          <section className="design-question-type-group" key={group.label}>
+                            <span className="design-question-type-group-label">{group.label}</span>
+                            <div className="design-question-type-options">
+                              {group.types.map((type) => {
+                                const option = INTERACTION_TYPE_OPTIONS.find((item) => item.type === type);
+                                const selected = type === activeQuestionDraft.item.type;
+                                return (
+                                  <button
+                                    type="button"
+                                    role="option"
+                                    aria-selected={selected}
+                                    className={`design-question-type-option ${selected ? "is-selected" : ""}`}
+                                    key={type}
+                                    onClick={() => {
+                                      changeQuestionType(type);
+                                      setQuestionTypeOpen(false);
+                                    }}
+                                  >
+                                    <span>{option?.label ?? interactionTypeLabel(type)}</span>
+                                    {selected && <Check size={13} />}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </section>
+                        ))}
+                        <p className="design-question-type-hint">换题型会尽量保留题干、解析、图片和选项。</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <Button size="sm" variant="secondary" aria-label="预览本题" onClick={() => setQuestionPreviewOpen(true)}>
+                  <Eye size={14} /> 预览
+                </Button>
+                {!readOnly && activeQuestionDraft && (
+                  <Button size="sm" onClick={commitQuestionDraft}>
+                    <Save size={14} /> 保存本题
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
 
           {selectedRound ? (
@@ -948,7 +1319,8 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
                 </span>
               </div>
 
-              {selectedItems.length > 0 && selectedItem ? (
+              {readOnly ? (
+                selectedItems.length > 0 && selectedItem ? (
                 <>
                   <div className="design-question-detail">
                     <div className="design-question-detail-head">
@@ -962,145 +1334,239 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
                     </p>
                   </div>
                 </>
+                ) : (
+                <div className="design-empty design-editor-empty">
+                  <strong>这一轮还没有题目</strong>
+                  <p>这一轮在本节课中没有题目。</p>
+                </div>
+                )
+              ) : addingToRoundId === selectedRound.id ? (
+                <QuestionTypePicker
+                  onPick={(type) => addQuestion(selectedRound, type)}
+                  onCancel={() => setAddingToRoundId("")}
+                />
+              ) : activeQuestionDraft ? (
+                <div className="design-question-editor">
+                  <div className="design-question-editor-meta">
+                    <span>第 {selectedItemIndex + 1} 题</span>
+                    {activeQuestionDraft.dirty && <span className="design-question-save-state is-dirty">有未保存修改</span>}
+                  </div>
+                  <InteractionEditor
+                    single
+                    items={[activeQuestionDraft.item]}
+                    activeItemId={activeQuestionDraft.item.id}
+                    onChange={(nextItems) => {
+                      const next = nextItems[0];
+                      if (!next) return;
+                      setDesignSaved(false);
+                      setQuestionDraft({ roundId: selectedRound.id, item: next, dirty: true });
+                    }}
+                  />
+                </div>
               ) : (
                 <div className="design-empty design-editor-empty">
                   <strong>这一轮还没有题目</strong>
-                  <p>{readOnly ? "这一轮在本节课中没有题目。" : "从中栏轮次底部点「加题」，或在完整编辑器里添加第一道题。"}</p>
+                  <p>先选一种题型，再填写题干和选项。</p>
+                  <Button variant="soft" size="sm" onClick={() => startAddQuestion(selectedRound)}>
+                    ＋ 加题
+                  </Button>
                 </div>
               )}
             </>
           ) : (
             <div className="design-empty design-editor-empty">
               <strong>先选一个轮次</strong>
-              <p>{readOnly ? "这节课没有留下可查看的互动轮次。" : "左侧新建或选中互动轮次后，这里会列出该轮里的题目。"}</p>
+              <p>{readOnly ? "这节课没有留下可查看的互动轮次。" : "从中栏新建或选中轮次后，这里会显示题目编辑。"}</p>
             </div>
           )}
         </Card>
       </div>
 
-      <InteractionSetEditorModal
-        open={Boolean(editorSeed)}
-        set={editorSeed?.set ?? null}
-        defaultLessonId={lesson.id}
-        defaultPhase={editorSeed?.phase ?? activePhase}
-        lockLesson
-        teacherId={user.id}
-        pendingSessionIds={editorSeed?.set ? [] : [session.id]}
-        onClose={() => setEditorSeed(null)}
-      />
-
       <Modal
-        open={libraryOpen}
-        title={`从互动库添加 · ${currentPhase.label}`}
-        onClose={() => setLibraryOpen(false)}
-        width="880px"
-      >
-        <p className="muted-copy">
-          选择一轮互动，复制一份到本节课。副本可以独立改题，不会影响互动库里的母版。
-        </p>
-        <div className="search-box" style={{ marginBottom: 16 }}>
-          <Search size={17} />
-          <TextInput
-            value={libraryQuery}
-            onChange={(event) => setLibraryQuery(event.target.value)}
-            placeholder="搜索互动名称或标签"
-          />
-        </div>
-        <div className="template-grid">
-          {filteredLibrarySets.map((set) => {
-            const version = getCurrentInteractionVersion(state, set);
-            const items = version?.items ?? [];
-            return (
-              <article key={set.id} className="template-card">
-                <div className="template-card-head">
-                  <span className={`phase-badge phase-${set.phase}`}>
-                    {set.phase === "preview" ? "预习" : set.phase === "live" ? "课中" : "复习"}
-                  </span>
-                  <Badge tone="neutral">{items.length} 道题</Badge>
-                </div>
-                <strong>{set.title}</strong>
-                <small>{(set.tags ?? []).join(" · ") || "互动库内容"}</small>
-                <div className="template-tags">
-                  {[...new Set(items.map((item) => item.type))].slice(0, 3).map((type) => (
-                    <span key={type}>{interactionTypeShortLabel(type)}</span>
-                  ))}
-                </div>
-                <Button size="sm" variant="secondary" onClick={() => copyFromLibrary(set)}>
-                  复制到本节课
+        open={addExistingOpen}
+        title={`添加已有互动 · ${currentPhase.label}`}
+        onClose={() => setAddExistingOpen(false)}
+        width="900px"
+        footer={addExistingTab === "templates" ? (
+          <div className="modal-footer-split">
+            <span>已选 {importSelection.length} 套模板</span>
+            <div>
+              <Button variant="ghost" onClick={() => setAddExistingOpen(false)}>取消</Button>
+              <PmNote kind="流程" note="点击后复制成新互动，只配置到本节课，原模板和其他课次不变。">
+                <Button disabled={importSelection.length === 0} onClick={confirmImport}>
+                  引入到本节课（{importSelection.length}）
                 </Button>
-              </article>
-            );
-          })}
-        </div>
-        {filteredLibrarySets.length === 0 && (
-          <EmptyState title="互动库里还没有内容" description="先到互动库新建一轮，或换个关键词再试。" />
+              </PmNote>
+            </div>
+          </div>
+        ) : (
+          <div className="modal-footer-split">
+            <span>选中的互动会复制成新轮次，只配置到本节课</span>
+            <Button variant="ghost" onClick={() => setAddExistingOpen(false)}>关闭</Button>
+          </div>
         )}
+      >
+        <Tabs
+          value={addExistingTab}
+          onChange={setAddExistingTab}
+          items={[
+            { value: "library", label: "我的互动库" },
+            { value: "templates", label: "互动模板库" }
+          ]}
+        />
+
+        <div className="add-existing-modal-body">
+          {addExistingTab === "library" ? (
+            <>
+              <p className="muted-copy">
+                选择一轮自己的互动，复制一份到本节课。副本可以独立改题，不会影响互动库里的母版。
+              </p>
+              <div className="search-box" style={{ marginBottom: 16 }}>
+                <Search size={17} />
+                <TextInput
+                  value={libraryQuery}
+                  onChange={(event) => setLibraryQuery(event.target.value)}
+                  placeholder="搜索互动名称或标签"
+                />
+              </div>
+              <div className="template-grid">
+                {filteredLibrarySets.map((set) => {
+                  const version = getCurrentInteractionVersion(state, set);
+                  const items = version?.items ?? [];
+                  return (
+                    <article key={set.id} className="template-card">
+                      <div className="template-card-head">
+                        <span className={`phase-badge phase-${set.phase}`}>
+                          {set.phase === "preview" ? "预习" : set.phase === "live" ? "课中" : "复习"}
+                        </span>
+                        <Badge tone="neutral">{items.length} 道题</Badge>
+                      </div>
+                      <strong>{set.title}</strong>
+                      <small>{(set.tags ?? []).join(" · ") || "互动库内容"}</small>
+                      <div className="template-tags">
+                        {[...new Set(items.map((item) => item.type))].slice(0, 3).map((type) => (
+                          <span key={type}>{interactionTypeShortLabel(type)}</span>
+                        ))}
+                      </div>
+                      <Button size="sm" variant="secondary" onClick={() => copyFromLibrary(set)}>
+                        复制到本节课
+                      </Button>
+                    </article>
+                  );
+                })}
+              </div>
+              {filteredLibrarySets.length === 0 && (
+                <EmptyState title="互动库里还没有内容" description="先到互动库新建一轮，或换个关键词再试。" />
+              )}
+            </>
+          ) : (
+            <>
+              <p className="muted-copy">
+                共 {state.interactionRoundTemplates.length} 轮互动模板，按教学场景和主题挑选。选中的模板会整轮复制成
+                {currentPhase.label}的互动设计，只配置到本节课，模板库本身不受影响。
+              </p>
+
+              <div className="material-library-toolbar">
+                <div className="search-box">
+                  <Search size={17} />
+                  <TextInput
+                    value={templateQuery}
+                    onChange={(event) => { setTemplateQuery(event.target.value); setTemplateVisible(12); }}
+                    placeholder="搜索模板主题，例如「餐厅」「天气」"
+                  />
+                </div>
+                <span className="design-template-count">匹配 {libraryTemplates.length} 轮</span>
+              </div>
+
+              <InteractionRoundTemplateChips
+                templates={state.interactionRoundTemplates}
+                value={templateScenario}
+                onChange={(next) => { setTemplateScenario(next); setTemplateVisible(12); }}
+              />
+
+              <div className="assign-session-list design-template-list">
+                {libraryTemplates.slice(0, templateVisible).map((template) => {
+                  const checked = importSelection.includes(template.id);
+                  const questionTemplates = roundTemplateQuestionTemplates(template, state.interactionTemplates);
+                  const types = [...new Set(questionTemplates.map((item) => item.item.type))];
+                  return (
+                    <label key={template.id} className={`assign-session-row ${checked ? "selected" : ""}`}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => setImportSelection((value) => (checked ? value.filter((id) => id !== template.id) : [...value, template.id]))}
+                      />
+                      <span className="assign-session-copy">
+                        <strong>{template.title}</strong>
+                        <small>{template.summary}</small>
+                      </span>
+                      <span className="design-template-tags">
+                        <Badge tone="purple">{questionTemplates.length} 道题</Badge>
+                        <Badge tone="blue">{template.topic}</Badge>
+                        <Badge tone="mint">{types.slice(0, 2).map(interactionTypeShortLabel).join(" · ")}</Badge>
+                      </span>
+                    </label>
+                  );
+                })}
+                {libraryTemplates.length === 0 && <p className="muted-copy">没有匹配的互动模板，换个教学场景或关键词再试。</p>}
+              </div>
+
+              {libraryTemplates.length > templateVisible && (
+                <div className="template-more">
+                  <Button variant="ghost" size="sm" onClick={() => setTemplateVisible((value) => value + 12)}>
+                    显示更多（还有 {libraryTemplates.length - templateVisible} 轮）
+                  </Button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </Modal>
 
       <Modal
         open={Boolean(removeTarget)}
-        title={
-          removeTarget?.kind === "interaction"
-            ? `移出互动 · ${removeTarget.set.title}`
-            : removeTarget?.kind === "question"
-              ? `删除题目 · ${removeTarget.item.prompt || "未填写题干"}`
-              : removeTarget
-                ? `移出材料 · ${removeTarget.material.title}`
-                : "移出内容"
-        }
+        title={`移出材料 · ${removeTarget?.material.title ?? ""}`}
         onClose={() => setRemoveTarget(null)}
         width="560px"
         footer={
           <div className="modal-footer-split">
-            <small>
-              {removeTarget?.kind === "question"
-                ? "删除后会发布新版本，历史版本仍可追溯"
-                : "只影响课堂配置，不会删除材料或互动本身"}
-            </small>
+            <small>只影响课堂配置，不会删除材料本身</small>
             <div>
               <Button variant="ghost" onClick={() => setRemoveTarget(null)}>取消</Button>
-              <Button variant="danger" onClick={confirmRemove}>
-                {removeTarget?.kind === "question" ? "确认删除" : "确认移出"}
-              </Button>
+              <Button variant="danger" onClick={confirmRemoveMaterial}>确认移出</Button>
             </div>
           </div>
         }
       >
-        {removeTarget?.kind === "question" ? (
-          <p className="muted-copy">这道题会从当前互动轮次中删除，并同步给使用该设计的课次。</p>
-        ) : (
-          <>
-            <p className="muted-copy">请选择移出范围，移出后内容仍会保留在材料库或互动库中。</p>
-            <div className="remove-scope-grid" role="radiogroup" aria-label="移出范围">
-              <button
-                type="button"
-                className={removeScope === "session" ? "active" : ""}
-                onClick={() => setRemoveScope("session")}
-                role="radio"
-                aria-checked={removeScope === "session"}
-              >
-                <span className="remove-scope-radio" />
-                <span className="remove-scope-copy">
-                  <strong>从本次课移出</strong>
-                  <small>只影响当前课次，其它课次保持原样。</small>
-                </span>
-              </button>
-              <button
-                type="button"
-                className={removeScope === "lesson" ? "active" : ""}
-                onClick={() => setRemoveScope("lesson")}
-                role="radio"
-                aria-checked={removeScope === "lesson"}
-              >
-                <span className="remove-scope-radio" />
-                <span className="remove-scope-copy">
-                  <strong>从该课节全部课次移出</strong>
-                  <small>当前课节的所有课次都不再显示。</small>
-                </span>
-              </button>
-            </div>
-          </>
-        )}
+        <p className="muted-copy">请选择移出范围，移出后材料仍会保留在材料库中。</p>
+        <div className="remove-scope-grid" role="radiogroup" aria-label="移出范围">
+          <button
+            type="button"
+            className={removeScope === "session" ? "active" : ""}
+            onClick={() => setRemoveScope("session")}
+            role="radio"
+            aria-checked={removeScope === "session"}
+          >
+            <span className="remove-scope-radio" />
+            <span className="remove-scope-copy">
+              <strong>从本次课移出</strong>
+              <small>只影响当前课次，其它课次保持原样。</small>
+            </span>
+          </button>
+          <button
+            type="button"
+            className={removeScope === "lesson" ? "active" : ""}
+            onClick={() => setRemoveScope("lesson")}
+            role="radio"
+            aria-checked={removeScope === "lesson"}
+          >
+            <span className="remove-scope-radio" />
+            <span className="remove-scope-copy">
+              <strong>从该课节全部课次移出</strong>
+              <small>当前课节的所有课次都不再显示。</small>
+            </span>
+          </button>
+        </div>
       </Modal>
 
       <Modal
@@ -1153,6 +1619,17 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
           <strong>{uploadForm.fileName || "点击选择演示文件"}</strong>
           <small>原型只保存文件元数据</small>
         </div>
+      </Modal>
+
+      <Modal
+        open={questionPreviewOpen}
+        title={`学生端预览 · 第 ${selectedItemIndex + 1} 题`}
+        onClose={() => setQuestionPreviewOpen(false)}
+        width="520px"
+      >
+        {previewQuestion && (
+          <StudentPhonePreview items={[previewQuestion]} onClose={() => setQuestionPreviewOpen(false)} />
+        )}
       </Modal>
 
       <MaterialScopeModal
@@ -1273,94 +1750,25 @@ export function TeacherSessionDesign({ mode = "teacher" }: { mode?: "teacher" | 
       </Modal>
 
       <Modal
-        open={Boolean(importPhase)}
-        title={`从互动模板库引入 · ${PHASES.find((item) => item.phase === importPhase)?.label ?? ""}`}
-        onClose={() => setImportPhase(null)}
-        width="900px"
+        open={Boolean(pendingDesignAction)}
+        title="有未保存的题目修改"
+        onClose={cancelPendingDesignAction}
+        width="500px"
         footer={
-          <div className="modal-footer-split">
-            <span>已选 {importSelection.length} 套模板</span>
+          <div className="modal-footer-split modal-footer-end">
             <div>
-              <Button variant="ghost" onClick={() => setImportPhase(null)}>取消</Button>
-              <PmNote kind="流程" note="点击后复制成新互动，只配置到本节课，原模板和其他课次不变。">
-                <Button disabled={importSelection.length === 0} onClick={confirmImport}>
-                  引入到本节课（{importSelection.length}）
-                </Button>
-              </PmNote>
+              <Button variant="ghost" onClick={cancelPendingDesignAction}>取消</Button>
+              <Button variant="secondary" onClick={() => resolvePendingDesignAction(false)}>不保存并继续</Button>
+              <Button onClick={() => resolvePendingDesignAction(true)}>保存并继续</Button>
             </div>
           </div>
         }
       >
         <p className="muted-copy">
-          共 {state.interactionRoundTemplates.length} 轮互动模板，按教学场景、主题和难度挑选。选中的模板会整轮复制成
-          {PHASES.find((item) => item.phase === importPhase)?.label ?? "该阶段"}的互动设计，只配置到本节课，模板库本身不受影响。
+          当前题目还有修改没有保存。要{pendingDesignAction?.label ?? "继续"}，先保存这些修改吗？
         </p>
-
-        <div className="material-library-toolbar">
-          <div className="search-box">
-            <Search size={17} />
-            <TextInput
-              value={templateQuery}
-              onChange={(event) => { setTemplateQuery(event.target.value); setTemplateVisible(12); }}
-              placeholder="搜索模板主题，例如「餐厅」「天气」"
-            />
-          </div>
-          <Select
-            className="sort-select"
-            value={templateLevel}
-            onChange={(event) => { setTemplateLevel(event.target.value as InteractionTemplateLevel | "all"); setTemplateVisible(12); }}
-            aria-label="模板难度"
-          >
-            <option value="all">全部难度</option>
-            <option value="beginner">初级</option>
-            <option value="intermediate">中级</option>
-            <option value="advanced">高级</option>
-          </Select>
-          <span className="design-template-count">匹配 {libraryTemplates.length} 轮</span>
-        </div>
-
-        <InteractionRoundTemplateChips
-          templates={state.interactionRoundTemplates}
-          value={templateScenario}
-          onChange={(next) => { setTemplateScenario(next); setTemplateVisible(12); }}
-        />
-
-        <div className="assign-session-list design-template-list">
-          {libraryTemplates.slice(0, templateVisible).map((template) => {
-            const checked = importSelection.includes(template.id);
-            const questionTemplates = roundTemplateQuestionTemplates(template, state.interactionTemplates);
-            const types = [...new Set(questionTemplates.map((item) => item.item.type))];
-            return (
-              <label key={template.id} className={`assign-session-row ${checked ? "selected" : ""}`}>
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => setImportSelection((value) => (checked ? value.filter((id) => id !== template.id) : [...value, template.id]))}
-                />
-                <span className="assign-session-copy">
-                  <strong>{template.title}</strong>
-                  <small>{template.summary}</small>
-                </span>
-                <span className="design-template-tags">
-                  <Badge tone="purple">{questionTemplates.length} 道题</Badge>
-                  <Badge tone="neutral">{templateLevelLabel(template.level)}</Badge>
-                  <Badge tone="blue">{template.topic}</Badge>
-                  <Badge tone="mint">{types.slice(0, 2).map(interactionTypeShortLabel).join(" · ")}</Badge>
-                </span>
-              </label>
-            );
-          })}
-          {libraryTemplates.length === 0 && <p className="muted-copy">没有匹配的互动模板，换个教学场景、难度或关键词再试。</p>}
-        </div>
-
-        {libraryTemplates.length > templateVisible && (
-          <div className="template-more">
-            <Button variant="ghost" size="sm" onClick={() => setTemplateVisible((value) => value + 12)}>
-              显示更多（还有 {libraryTemplates.length - templateVisible} 轮）
-            </Button>
-          </div>
-        )}
       </Modal>
+
     </>
   );
 }

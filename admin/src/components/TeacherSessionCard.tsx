@@ -17,7 +17,7 @@ export function TeacherSessionCard({
   const runtime = sessionRuntimeStatus(session);
   const cancelled = runtime === "cancelled";
   const ended = runtime === "ended";
-  const designLabel = runtime === "upcoming" ? "备课" : "查看设计";
+  const designLabel = runtime === "upcoming" ? "备课" : "查看备课";
 
   return (
     <OperatorSessionCard

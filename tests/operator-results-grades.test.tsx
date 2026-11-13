@@ -46,7 +46,9 @@ describe("operator results and grades", () => {
     const filterLabels = Array.from(
       container.querySelectorAll<HTMLElement>(".results-filter-bar select, .results-filter-bar input")
     ).map((control) => control.getAttribute("aria-label"));
-    expect(filterLabels).toEqual(["学校范围", "按班级筛选", "统计时间范围", "搜索学生、等级或班级"]);
+    expect(filterLabels).toEqual(["学校范围", "按班级筛选", "统计时间范围"]);
+    const summaryCard = screen.getByRole("heading", { name: "印尼圣心学校学生成绩明细" }).closest(".grade-table-card") as HTMLElement;
+    expect(within(summaryCard).getByLabelText("搜索学生或等级")).toBeInTheDocument();
     expect(within(classSelect).getByRole("option", { name: "印尼圣心学校7年级A班" })).toBeInTheDocument();
 
     fireEvent.change(schoolSelect, { target: { value: "school-hope" } });
@@ -240,7 +242,9 @@ describe("operator results and grades", () => {
     const gradeFilterLabels = Array.from(
       container.querySelectorAll<HTMLElement>(".results-filter-bar select, .results-filter-bar input")
     ).map((control) => control.getAttribute("aria-label"));
-    expect(gradeFilterLabels).toEqual(["学校范围", "按班级筛选", "统计时间范围", "搜索学生、等级或班级"]);
+    expect(gradeFilterLabels).toEqual(["学校范围", "按班级筛选", "统计时间范围"]);
+    const summaryCard = screen.getByRole("heading", { name: "印尼圣心学校学生成绩明细" }).closest(".grade-table-card") as HTMLElement;
+    expect(within(summaryCard).getByLabelText("搜索学生或等级")).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("按班级筛选"), { target: { value: firstClass!.id } });
 

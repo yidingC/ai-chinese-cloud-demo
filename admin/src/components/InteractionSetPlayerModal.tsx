@@ -41,8 +41,10 @@ export function InteractionSetPlayerModal({
         lastResult ? (
           <div className="result-modal-footer">
             <span>{t("student.player.score")}</span>
-            <strong>{lastResult.score}</strong>
-            {lastResult.score < 100 && <Badge tone="orange">{t("student.player.improve")}</Badge>}
+            <strong>{lastResult.score ?? "—"}</strong>
+            {lastResult.score === null
+              ? <Badge tone="mint">{t("student.player.participationComplete")}</Badge>
+              : lastResult.score < 100 && <Badge tone="orange">{t("student.player.improve")}</Badge>}
           </div>
         ) : undefined
       }
@@ -67,7 +69,9 @@ export function InteractionSetPlayerModal({
                     wrongItemIds: result.wrongItemIds,
                     pollAnswers: result.pollAnswers
                   }),
-                t("student.player.submittedToast", { score: result.score })
+                result.score === null
+                  ? t("student.player.participationToast")
+                  : t("student.player.submittedToast", { score: result.score })
               );
             }}
           />
@@ -76,12 +80,22 @@ export function InteractionSetPlayerModal({
       {lastResult && (
         <div className="player-result-summary">
           <div className="result-score-ring">
-            <strong>{lastResult.score}</strong>
-            <span>{t("student.player.points")}</span>
+            <strong>{lastResult.score ?? "—"}</strong>
+            <span>{lastResult.score === null ? t("student.player.participationComplete") : t("student.player.points")}</span>
           </div>
           <div>
-            <h3>{lastResult.score === 100 ? t("student.player.perfect") : t("student.player.retryMessage")}</h3>
-            <p>{t("student.player.summary", { seconds: lastResult.elapsedSeconds, wrong: lastResult.wrongItemIds.length })}</p>
+            <h3>
+              {lastResult.score === null
+                ? t("student.player.participationOnly")
+                : lastResult.score === 100
+                  ? t("student.player.perfect")
+                  : t("student.player.retryMessage")}
+            </h3>
+            <p>
+              {lastResult.score === null
+                ? t("student.player.participationSummary", { seconds: lastResult.elapsedSeconds })
+                : t("student.player.summary", { seconds: lastResult.elapsedSeconds, wrong: lastResult.wrongItemIds.length })}
+            </p>
           </div>
           <PmNote kind="流程" note="再次提交会新增一条作答历史，并保留历史最高分。">
             <Button onClick={() => setLastResult(null)}>{t("student.retry")}</Button>

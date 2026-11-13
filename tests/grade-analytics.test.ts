@@ -135,6 +135,23 @@ describe("grade analytics", () => {
     expect(teacher.compositeAverage).not.toBeNull();
   });
 
+  it("weights class category averages by student instead of by record count", () => {
+    const range = relativeGradeRange("Asia/Jakarta", 30);
+    const analytics = buildGradeAnalytics(platform.getState(), range, { teacherId: "teacher-lina" });
+
+    expect(analytics.categoryAverages.interaction.average).toBe(80.2);
+    expect(analytics.categoryAverages.homework.average).toBe(75.3);
+    expect(analytics.categoryAverages.exam.average).toBe(82.1);
+
+    const interactionStudentMean = analytics.students
+      .map((student) => student.categories.interaction.average)
+      .filter((value): value is number => value !== null);
+    expect(interactionStudentMean).toHaveLength(5);
+    expect(analytics.categoryAverages.interaction.average).toBe(
+      Math.round(interactionStudentMean.reduce((sum, value) => sum + value, 0) / interactionStudentMean.length * 10) / 10
+    );
+  });
+
   it("scopes a single-session view to that session and leaves class assessments out", () => {
     const range = relativeGradeRange("Asia/Jakarta", 30);
     const state = platform.getState();
@@ -149,6 +166,26 @@ describe("grade analytics", () => {
     expect(sessionAnalytics.categoryAverages.homework.count).toBe(0);
     expect(sessionAnalytics.categoryAverages.exam.count).toBe(0);
     expect(sessionAnalytics.records.length).toBeLessThan(classAnalytics.records.length);
+  });
+
+  it("keeps participation-only attempts out of interaction grades", () => {
+    const range = relativeGradeRange("Asia/Jakarta", 30);
+    const before = buildGradeAnalytics(platform.getState(), range, { studentId: "student-anisa" }).students[0];
+
+    const recorded = platform.recordAttempt({
+      setId: "set-greetings-review-voice",
+      studentId: "student-anisa",
+      sessionId: "session-past",
+      phase: "review",
+      answers: {},
+      score: null,
+      timeSpentSeconds: 45
+    });
+    expect(recorded.data?.score).toBeNull();
+
+    const after = buildGradeAnalytics(platform.getState(), range, { studentId: "student-anisa" }).students[0];
+    expect(after.categories.interaction.count).toBe(before.categories.interaction.count);
+    expect(after.records.some((item) => item.title === "课后语音练习")).toBe(false);
   });
 
   it("keeps each interaction record on the version that was answered", () => {

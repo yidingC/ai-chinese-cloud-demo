@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { CalendarCheck, Clock3, Copy, Eye, Layers3, Pencil, Plus, Search, Settings2, Sparkles } from "lucide-react";
+import { CalendarCheck, Clock3, Copy, Eye, Layers3, Pencil, Plus, Search, Settings2, Sparkles, Trash2 } from "lucide-react";
 import { platform } from "../../lib/platform";
 import { usePlatformStore } from "../../store/usePlatformStore";
 import { currentUser, getCurrentInteractionVersion } from "../../lib/domain";
@@ -10,15 +10,13 @@ import type {
   InteractionRoundScenario,
   InteractionRoundTemplate,
   InteractionSet,
-  InteractionTemplateLevel,
   Phase
 } from "../../domain/types";
 import { interactionTypeShortLabel } from "../../lib/interactionTypes";
-import { Badge, Button, Card, EmptyState, Modal, PageHeader, Select, Tabs, TextInput } from "../../components/ui";
+import { Button, Card, EmptyState, Modal, PageHeader, Select, Tabs, TextInput } from "../../components/ui";
 import { CopyInteractionToLessonModal } from "../../components/CopyInteractionToLessonModal";
 import { templateToItem } from "../../components/InteractionTemplatePicker";
-import { templateLevelLabel } from "../../lib/templateLibrary";
-import { roundTemplateQuestionTemplates } from "../../lib/roundTemplates";
+import { roundTemplateQuestionTemplates, roundTemplateScenarioLabel } from "../../lib/roundTemplates";
 import { InteractionRoundTemplateChips } from "../../components/InteractionRoundTemplateChips";
 import { StudentPhonePreview } from "../../components/InteractionPlayer";
 import { InteractionSetEditorModal } from "../../components/InteractionSetEditorModal";
@@ -29,11 +27,11 @@ import { formatDateTime } from "../../lib/format";
 
 export function TeacherInteractions() {
   const { t } = useTranslation();
-  const { state } = usePlatformStore();
+  const { state, run } = usePlatformStore();
   const navigate = useNavigate();
   const user = currentUser(state);
   /** 互动库只展示全局母版；课节里的是各自的副本。 */
-  const teacherSets = state.interactionSets.filter((set) => set.scope === "library");
+  const teacherSets = state.interactionSets.filter((set) => set.scope === "library" && !set.deletedAt);
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState<"all" | Phase>("all");
   const [query, setQuery] = useState("");
@@ -42,7 +40,6 @@ export function TeacherInteractions() {
   const [templateQuery, setTemplateQuery] = useState("");
   const [templateScenario, setTemplateScenario] = useState<InteractionRoundScenario | "all">("all");
   const [templatePhase, setTemplatePhase] = useState<"all" | Phase>("all");
-  const [templateLevel, setTemplateLevel] = useState<InteractionTemplateLevel | "all">("all");
   const [templateVisible, setTemplateVisible] = useState(12);
   const [copyTarget, setCopyTarget] = useState<InteractionSet | null>(null);
   const [editingSet, setEditingSet] = useState<InteractionSet | null | undefined>(undefined);
@@ -75,16 +72,15 @@ export function TeacherInteractions() {
     return state.interactionRoundTemplates.filter((template) => {
       const scenarioMatch = templateScenario === "all" || template.scenarioId === templateScenario;
       const phaseMatch = templatePhase === "all" || template.phase === templatePhase;
-      const levelMatch = templateLevel === "all" || template.level === templateLevel;
       const queryMatch =
         !keyword ||
         template.title.toLowerCase().includes(keyword) ||
         template.topic.toLowerCase().includes(keyword) ||
         template.summary.toLowerCase().includes(keyword) ||
         template.tags.join(" ").toLowerCase().includes(keyword);
-      return scenarioMatch && phaseMatch && levelMatch && queryMatch;
+      return scenarioMatch && phaseMatch && queryMatch;
     });
-  }, [state.interactionRoundTemplates, templateQuery, templateScenario, templatePhase, templateLevel]);
+  }, [state.interactionRoundTemplates, templateQuery, templateScenario, templatePhase]);
 
   function openCreate(options?: { phase?: Phase; title?: string; items?: InteractionItem[] }) {
     setLibraryDraft(null);
@@ -95,8 +91,8 @@ export function TeacherInteractions() {
     setEditingSet(null);
   }
 
-  /** 互动库新建：先设置壳层信息，再进入与「编辑题目」相同的双栏工作区。 */
-  function openLibraryCreate(options?: { phase?: Phase; title?: string; items?: InteractionItem[] }) {
+  /** 互动库新建：直接进入单轮编辑器，标题在编辑区内填写。 */
+  function openLibraryCreate(options?: { phase?: Phase; title?: string; items?: InteractionItem[]; readOnlyTemplate?: boolean }) {
     setEditingSet(undefined);
     setEditorCopyTarget(null);
     setEditingLibrarySetId("");
@@ -104,9 +100,8 @@ export function TeacherInteractions() {
       title: options?.title ?? "",
       phase: options?.phase ?? "live",
       tags: [],
-      countsTowardGrade: true,
       items: options?.items ?? [],
-      openSettings: !options?.title && !options?.items?.length
+      readOnlyTemplate: options?.readOnlyTemplate
     });
   }
 
@@ -116,7 +111,8 @@ export function TeacherInteractions() {
     openLibraryCreate({
       phase: template.phase,
       title: template.title,
-      items: questionTemplates.map(templateToItem)
+      items: questionTemplates.map(templateToItem),
+      readOnlyTemplate: true
     });
   }
 
@@ -130,7 +126,7 @@ export function TeacherInteractions() {
     if (templateId) {
       const template = state.interactionTemplates.find((item) => item.id === templateId);
       if (template) {
-        openLibraryCreate({ title: template.title, items: [templateToItem(template)] });
+        openLibraryCreate({ title: template.title, items: [templateToItem(template)], readOnlyTemplate: true });
       }
     } else if (previewSetId) {
       const target = state.interactionSets.find((item) => item.id === previewSetId);
@@ -168,20 +164,22 @@ export function TeacherInteractions() {
     setEditingSet(set);
   }
 
+  function deleteLibrarySet(set: InteractionSet) {
+    const result = run(
+      () => platform.deleteInteractionSet({ setId: set.id, actorId: user.id }),
+      `已删除“${set.title}”；已复制到课次的版本不受影响`
+    );
+    if (!result.ok) return;
+    if (editingLibrarySetId === set.id) setEditingLibrarySetId("");
+    if (copyTarget?.id === set.id) setCopyTarget(null);
+  }
+
   return (
     <>
       <PageHeader
         eyebrow="Interaction library"
         title={t("teacher.interactionLibrary")}
         description="这里存放可被任意课次取用的互动轮次；复制到课次后各改各的，互不影响。"
-        actions={
-          <>
-            <Button variant="secondary" onClick={() => navigate("/teacher/schedule")}><CalendarCheck size={16} /> 去我的课表</Button>
-            <PmNote kind="流程" note="点击后创建互动；保存并发布会立即生成学生看到的当前版本。">
-              <Button onClick={() => openLibraryCreate()}><Plus size={17} /> {t("teacher.createInteraction")}</Button>
-            </PmNote>
-          </>
-        }
       />
 
       <Card className="content-filter-bar library-tab-bar">
@@ -193,11 +191,12 @@ export function TeacherInteractions() {
             { value: "templates", label: "互动模板库", count: state.interactionRoundTemplates.length }
           ]}
         />
-        <span className="library-tab-hint">
-          {libraryTab === "designs"
-            ? "每一轮可包含多道题；可预览、复制到课次或继续编辑母版。"
-            : "按教学场景整理的一轮互动模板，整轮复用后可继续修改。"}
-        </span>
+        <div className="library-tab-actions">
+          <Button variant="secondary" onClick={() => navigate("/teacher/schedule")}><CalendarCheck size={16} /> 去我的课表</Button>
+          <PmNote kind="流程" note="点击后创建互动；保存到互动库时会立即生成学生看到的当前版本。">
+            <Button onClick={() => openLibraryCreate()}><Plus size={17} /> {t("teacher.createInteraction")}</Button>
+          </PmNote>
+        </div>
       </Card>
 
       {libraryTab === "designs" && (
@@ -256,7 +255,7 @@ export function TeacherInteractions() {
                   <Settings2 size={14} />
                 </Button>
               </div>
-              <h2>{set.title}</h2>
+              <h2 data-interaction-set-id={set.id}>{set.title}</h2>
               {types.length > 0 && (
                 <div className="interaction-type-chips round-card-chips">
                   {types.slice(0, 4).map((type) => (
@@ -274,6 +273,16 @@ export function TeacherInteractions() {
                   <Button size="sm" variant="ghost" onClick={() => openEdit(set, "preview")}><Eye size={15} /> 预览</Button>
                   <Button size="sm" variant="ghost" onClick={() => setCopyTarget(set)}><Copy size={15} /> 复制到课次</Button>
                   <Button size="sm" variant="soft" onClick={() => openEdit(set)}><Pencil size={15} /> 编辑题目</Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="round-card-delete"
+                    aria-label={`删除互动 ${set.title}`}
+                    title="删除"
+                    onClick={() => deleteLibrarySet(set)}
+                  >
+                    <Trash2 size={15} />
+                  </Button>
                 </div>
               </div>
             </Card>
@@ -309,17 +318,6 @@ export function TeacherInteractions() {
                     placeholder="搜索模板主题，例如“餐厅”“天气”"
                   />
                 </div>
-                <Select
-                  className="sort-select"
-                  value={templateLevel}
-                  onChange={(event) => { setTemplateLevel(event.target.value as InteractionTemplateLevel | "all"); setTemplateVisible(12); }}
-                  aria-label="模板难度"
-                >
-                  <option value="all">全部难度</option>
-                  <option value="beginner">初级</option>
-                  <option value="intermediate">中级</option>
-                  <option value="advanced">高级</option>
-                </Select>
               </div>
             </div>
             <div className="round-template-filter-main">
@@ -343,20 +341,20 @@ export function TeacherInteractions() {
             return (
               <Card key={template.id} className="round-card round-template-card">
                 <div className="round-card-top">
-                  <span className={`phase-badge phase-${template.phase}`}>
-                    {template.phase === "preview" ? "预习" : template.phase === "live" ? "课中" : "复习"}
+                  <span className={`round-template-scene-badge is-${template.scenarioId}`}>
+                    {roundTemplateScenarioLabel(template.scenarioId)}
                   </span>
-                  <Badge tone="neutral">{templateLevelLabel(template.level)}</Badge>
                 </div>
-                <h2>{template.title}</h2>
-                <p className="round-card-summary">{template.summary}</p>
-                <div className="round-card-chips">
-                  {types.slice(0, 4).map((type) => <span key={type}>{interactionTypeShortLabel(type)}</span>)}
-                  {types.length > 4 && <span>+{types.length - 4}</span>}
-                </div>
-                <div className="round-card-stats">
-                  <span><Layers3 size={14} /> {items.length} 道题 · {types.length} 种题型</span>
-                  <span><Clock3 size={14} /> 约 {template.estimatedMinutes} 分钟</span>
+                <h2>{template.topic}</h2>
+                <div className="round-template-meta-bar">
+                  <div className="round-card-chips">
+                    {types.slice(0, 3).map((type) => <span key={type}>{interactionTypeShortLabel(type)}</span>)}
+                    {types.length > 3 && <span>+{types.length - 3}</span>}
+                  </div>
+                  <div className="round-template-meta">
+                    <span>{items.length} 题</span>
+                    <span>约 {template.estimatedMinutes} 分钟</span>
+                  </div>
                 </div>
                 <div className="round-card-footer">
                   <span />
@@ -379,7 +377,7 @@ export function TeacherInteractions() {
             </Button>
           </div>
         )}
-        {roundTemplates.length === 0 && <EmptyState title="没有匹配的互动模板" description="换个教学场景、难度或关键词再试。" />}
+        {roundTemplates.length === 0 && <EmptyState title="没有匹配的互动模板" description="换个教学场景或关键词再试。" />}
       </>
       )}
 
@@ -408,6 +406,10 @@ export function TeacherInteractions() {
         open={Boolean(editingLibrarySetId || libraryDraft)}
         setId={editingLibrarySetId}
         draft={libraryDraft ?? undefined}
+        onTemplateSaved={(setId) => {
+          setLibraryDraft(null);
+          setEditingLibrarySetId(setId);
+        }}
         onClose={() => {
           setEditingLibrarySetId("");
           setLibraryDraft(null);

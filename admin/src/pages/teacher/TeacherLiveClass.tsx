@@ -444,13 +444,16 @@ export function TeacherLiveClass({ initialLiveRoomOpen = false }: { initialLiveR
 
   if (!snapshot) {
     const session = state.sessions.find((item) => item.id === sessionId);
-    const lesson = session ? getLesson(state, session.lessonId) : undefined;
+    const accessDenied = Boolean(session && session.teacherId !== user.id);
+    const lesson = session && !accessDenied ? getLesson(state, session.lessonId) : undefined;
     return (
       <>
         <PageHeader
           eyebrow="Live classroom"
-          title={lesson?.title ?? session?.title ?? "进入课堂"}
-          description={session
+          title={accessDenied ? "无权访问该课次" : lesson?.title ?? session?.title ?? "进入课堂"}
+          description={accessDenied
+            ? "这个课次不属于当前老师，请返回自己的课表。"
+            : session
             ? `${session.className} · ${lesson?.subtitle ?? ""} · ${formatDateTime(session.startAt, state.ui.timeZone, state.ui.language)} · ${session.roomLabel}`
             : "没有找到这节课。"}
           actions={
@@ -462,12 +465,14 @@ export function TeacherLiveClass({ initialLiveRoomOpen = false }: { initialLiveR
         <section className="live-class-empty">
           <span><BookOpenText size={30} /></span>
           <div>
-            <h2>{session ? "课堂还没有准备好" : "没有找到这节课"}</h2>
-            <p>{session
+            <h2>{accessDenied ? "这不是你的课次" : session ? "课堂还没有准备好" : "没有找到这节课"}</h2>
+            <p>{accessDenied
+              ? "请通过自己的课表进入课堂。"
+              : session
               ? "这节课还没有可用的课中课件或互动。先完成备课，再进入课堂。"
               : "课次可能已被取消或删除，请返回课表重新选择。"}</p>
           </div>
-          {session && (
+          {session && !accessDenied && (
             <Button onClick={() => navigate(`/teacher/session/${session.id}/design`)}>
               <Layers3 size={16} /> 去备课
             </Button>

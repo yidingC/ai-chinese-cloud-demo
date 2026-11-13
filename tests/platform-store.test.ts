@@ -668,7 +668,7 @@ describe("AI Chinese Cloud platform store", () => {
     expect(scenarioVersion?.items.map((item) => item.type)).toEqual(["picture", "picture-match", "situation", "dialogue"]);
   });
 
-  it("covers every student interaction type with templates for every topic and level", () => {
+  it("covers every student interaction type with one standard template per topic", () => {
     const state = platform.getState();
     const studentTypes = [
       "match",
@@ -693,20 +693,19 @@ describe("AI Chinese Cloud platform store", () => {
     const topics = [...new Set(state.interactionTemplates.map((template) => template.topic))];
     expect(topics.length).toBe(14);
 
-    // 每种题型都要覆盖全部主题的初级 / 中级 / 高级。
+    // 每种题型每个主题只保留一张标准模板，不再按难度重复三份。
     studentTypes.forEach((type) => {
       const matched = state.interactionTemplates.filter((template) => template.type === type);
-      expect(matched.map((template) => template.id).length).toBe(topics.length * 3);
+      expect(matched.length).toBe(topics.length);
       topics.forEach((topic) => {
-        ["beginner", "intermediate", "advanced"].forEach((level) => {
-          expect(matched.some((template) => template.topic === topic && template.level === level)).toBe(true);
-        });
+        expect(matched.filter((template) => template.topic === topic)).toHaveLength(1);
       });
     });
 
     // 一道题一份内容：每套模板的 item 都要有答案字段，不能是空壳。
     state.interactionTemplates.forEach((template) => {
       expect(template.summary.length).toBeGreaterThan(0);
+      expect(template.summary).not.toContain("难度");
       expect(template.item.prompt.length).toBeGreaterThan(0);
     });
   });
@@ -714,11 +713,12 @@ describe("AI Chinese Cloud platform store", () => {
   it("groups full interaction rounds by teaching scenario", () => {
     const state = platform.getState();
     const rounds = state.interactionRoundTemplates;
-    expect(rounds.length).toBe(252);
+    expect(rounds.length).toBe(84);
     expect(new Set(rounds.map((round) => round.scenarioId))).toEqual(
       new Set(["warmup", "vocabulary", "sentence", "scenario", "review", "speaking"])
     );
     expect(new Set(rounds.map((round) => round.topicId)).size).toBe(14);
+    expect(new Set(rounds.map((round) => `${round.topicId}-${round.scenarioId}`)).size).toBe(84);
 
     const questionTemplateIds = new Set(state.interactionTemplates.map((template) => template.id));
     rounds.forEach((round) => {
